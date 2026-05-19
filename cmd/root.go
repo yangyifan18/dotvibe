@@ -7,11 +7,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var version = "dev"
+
 var rootCmd = &cobra.Command{
-	Use:   "dotvibe",
-	Short: "Backup and restore vibe coding agent data",
+	Use:     "dotvibe",
+	Short:   "Backup and restore vibe coding agent data",
+	Version: version,
 	Long: `dotvibe backs up and restores data from AI coding tools
-(Claude Code, Codex CLI, OpenCode) for migration between machines.`,
+(Claude Code, Codex CLI, OpenCode) for migration between machines.
+
+Usage:
+  dotvibe status              Show detected tools
+  dotvibe export              Create a backup
+  dotvibe list <archive>      Show backup contents
+  dotvibe import <archive>    Restore from backup`,
 }
 
 func Execute() error {

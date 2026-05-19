@@ -11,7 +11,7 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show detected vibe coding tools",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("Detected vibe coding tools:\n")
+		fmt.Println("Detected vibe coding tools:")
 
 		found := false
 		for _, adapter := range adapters.AllAdapters() {
