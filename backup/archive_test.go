@@ -105,6 +105,63 @@ func TestCreateArchive_Empty(t *testing.T) {
 	}
 }
 
+func TestReadArchive(t *testing.T) {
+	// Create a test archive first
+	src := t.TempDir()
+	writeFile(t, src+"/config/settings.json", `{"theme":"dark"}`)
+	writeFile(t, src+"/memory/MEMORY.md", "# Memory\n")
+
+	entries := []adapters.FileEntry{
+		{SourcePath: src + "/config/settings.json", InArchive: "claude-code/config/settings.json", Category: adapters.CategoryConfig},
+		{SourcePath: src + "/memory/MEMORY.md", InArchive: "claude-code/memory/MEMORY.md", Category: adapters.CategoryMemory},
+	}
+
+	manifest := &Manifest{
+		Version:  "1.0.0",
+		Hostname: "old-mac",
+		Tools: map[string]ToolManifest{
+			"claude-code": {Included: []string{"config", "memory"}, FileCount: 2},
+		},
+	}
+
+	archivePath := t.TempDir() + "/test.tar.gz"
+	if err := CreateArchive(archivePath, manifest, entries); err != nil {
+		t.Fatalf("CreateArchive: %v", err)
+	}
+
+	// Now read it back
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	if ra.Manifest.Hostname != "old-mac" {
+		t.Errorf("Hostname = %q, want %q", ra.Manifest.Hostname, "old-mac")
+	}
+
+	files := ra.ListFiles()
+	if len(files) != 2 {
+		t.Errorf("ListFiles count = %d, want 2", len(files))
+	}
+
+	// Extract a file
+	data, err := ra.ReadFile("claude-code/config/settings.json")
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != `{"theme":"dark"}` {
+		t.Errorf("ReadFile content = %q, want %q", string(data), `{"theme":"dark"}`)
+	}
+}
+
+func TestReadArchive_NonExistent(t *testing.T) {
+	_, err := ReadArchive("/nonexistent/archive.tar.gz")
+	if err == nil {
+		t.Error("expected error for missing archive")
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
