@@ -87,27 +87,63 @@ func TestExportBaseFlagRequiresReadableArchive(t *testing.T) {
 }
 
 func TestExportBaseFlagRejectsOutputOverwriteOfBaseArchive(t *testing.T) {
-	oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase := exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase
-	defer func() {
-		exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase = oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase
-	}()
-	baseArchive := createDiffArchive(t, map[string]string{"tool/config/base.txt": "same"})
-
-	exportOutput = baseArchive
-	exportForce = true
-	exportOnly = "missing-tool"
-	exportWithHist = false
-	exportExcludes = nil
-	exportBase = baseArchive
-
-	if err := exportCmd.RunE(exportCmd, nil); err == nil {
-		t.Fatal("expected export to reject using the base archive as output")
+	tests := []struct {
+		name       string
+		outputPath func(t *testing.T, baseArchive string) string
+	}{
+		{
+			name: "exact same path",
+			outputPath: func(t *testing.T, baseArchive string) string {
+				return baseArchive
+			},
+		},
+		{
+			name: "output symlink to base",
+			outputPath: func(t *testing.T, baseArchive string) string {
+				link := filepath.Join(t.TempDir(), "output-link.tar.gz")
+				if err := os.Symlink(baseArchive, link); err != nil {
+					t.Skipf("symlink unavailable: %v", err)
+				}
+				return link
+			},
+		},
+		{
+			name: "output hardlink to base",
+			outputPath: func(t *testing.T, baseArchive string) string {
+				link := filepath.Join(t.TempDir(), "output-hardlink.tar.gz")
+				if err := os.Link(baseArchive, link); err != nil {
+					t.Skipf("hardlinks unavailable: %v", err)
+				}
+				return link
+			},
+		},
 	}
-	baseReader, err := backup.ReadArchive(baseArchive)
-	if err != nil {
-		t.Fatalf("base archive should remain readable: %v", err)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase := exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase
+			defer func() {
+				exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase = oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase
+			}()
+			baseArchive := createDiffArchive(t, map[string]string{"tool/config/base.txt": "same"})
+
+			exportOutput = tt.outputPath(t, baseArchive)
+			exportForce = true
+			exportOnly = "missing-tool"
+			exportWithHist = false
+			exportExcludes = nil
+			exportBase = baseArchive
+
+			if err := exportCmd.RunE(exportCmd, nil); err == nil {
+				t.Fatal("expected export to reject using the base archive as output")
+			}
+			baseReader, err := backup.ReadArchive(baseArchive)
+			if err != nil {
+				t.Fatalf("base archive should remain readable: %v", err)
+			}
+			defer baseReader.Close()
+		})
 	}
-	defer baseReader.Close()
 }
 
 func TestCreateArchiveFromExportPlanWritesIncrementalMetadata(t *testing.T) {
