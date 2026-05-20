@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/yangyifan18/dotvibe/adapters"
@@ -21,7 +22,51 @@ func CreateArchive(dst string, manifest *Manifest, entries []adapters.FileEntry)
 		return err
 	}
 	manifest.Files = files
+	manifest.Normalize()
 
+	return createArchiveFile(dst, manifest, func(tw *tar.Writer) error {
+		// Write all file entries
+		for _, entry := range entries {
+			if err := writeFileToTar(tw, entry.SourcePath, entry.InArchive); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// StoredEntry maps a source file to its physical storage path inside an archive.
+type StoredEntry struct {
+	SourcePath string
+	StoredPath string
+}
+
+// CreateArchiveWithStoredEntries writes a tar.gz file using manifest logical paths
+// and independent physical storage paths for payloads.
+func CreateArchiveWithStoredEntries(dst string, manifest *Manifest, entries []StoredEntry) error {
+	manifest.Normalize()
+	seen := map[string]struct{}{}
+	for _, entry := range entries {
+		if err := validateArchivePath(entry.StoredPath); err != nil {
+			return err
+		}
+		if _, ok := seen[entry.StoredPath]; ok {
+			return fmt.Errorf("duplicate stored archive path: %s", entry.StoredPath)
+		}
+		seen[entry.StoredPath] = struct{}{}
+	}
+
+	return createArchiveFile(dst, manifest, func(tw *tar.Writer) error {
+		for _, entry := range entries {
+			if err := writeFileToTar(tw, entry.SourcePath, entry.StoredPath); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func createArchiveFile(dst string, manifest *Manifest, writePayloads func(*tar.Writer) error) error {
 	f, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -43,14 +88,7 @@ func CreateArchive(dst string, manifest *Manifest, entries []adapters.FileEntry)
 		return err
 	}
 
-	// Write all file entries
-	for _, entry := range entries {
-		if err := writeFileToTar(tw, entry.SourcePath, entry.InArchive); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return writePayloads(tw)
 }
 
 func writeBytesToTar(tw *tar.Writer, name string, data []byte) error {
@@ -98,10 +136,12 @@ func writeFileToTar(tw *tar.Writer, srcPath, archivePath string) error {
 
 // ReadArchive opens a tar.gz for reading. Caller must call Close().
 type ArchiveReader struct {
-	f        *os.File
-	path     string
-	Manifest *Manifest
-	files    []archiveFile
+	f             *os.File
+	path          string
+	Manifest      *Manifest
+	files         []archiveFile
+	storedByPath  map[string]archiveFile
+	logicalByPath map[string]FileManifest
 }
 
 type archiveFile struct {
@@ -116,7 +156,12 @@ func ReadArchive(path string) (*ArchiveReader, error) {
 		return nil, err
 	}
 
-	ar := &ArchiveReader{f: f, path: path}
+	ar := &ArchiveReader{
+		f:             f,
+		path:          path,
+		storedByPath:  map[string]archiveFile{},
+		logicalByPath: map[string]FileManifest{},
+	}
 	if err := ar.index(); err != nil {
 		f.Close()
 		return nil, err
@@ -170,6 +215,9 @@ func (ar *ArchiveReader) index() error {
 		}
 
 		ar.files = append(ar.files, archiveFile{Name: hdr.Name, Size: hdr.Size})
+		if hdr.Name != "manifest.json" {
+			ar.storedByPath[hdr.Name] = archiveFile{Name: hdr.Name, Size: hdr.Size}
+		}
 	}
 	if ar.Manifest == nil {
 		return fmt.Errorf("archive missing manifest.json")
@@ -185,10 +233,11 @@ func (ar *ArchiveReader) index() error {
 // ListFiles returns the paths of all files in the archive (excluding manifest).
 func (ar *ArchiveReader) ListFiles() []string {
 	if ar.Manifest != nil && len(ar.Manifest.Files) > 0 {
-		names := make([]string, 0, len(ar.Manifest.Files))
-		for _, file := range ar.Manifest.Files {
-			names = append(names, file.Path)
+		names := make([]string, 0, len(ar.logicalByPath))
+		for name := range ar.logicalByPath {
+			names = append(names, name)
 		}
+		sort.Strings(names)
 		return names
 	}
 
@@ -198,6 +247,7 @@ func (ar *ArchiveReader) ListFiles() []string {
 			names = append(names, f.Name)
 		}
 	}
+	sort.Strings(names)
 	return names
 }
 
@@ -206,11 +256,17 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 	if err := validateArchivePath(name); err != nil {
 		return nil, err
 	}
-	physicalName, err := ar.physicalPathForRead(name)
+	physicalName, err := ar.storedPathForRead(name)
 	if err != nil {
 		return nil, err
 	}
+	return ar.readStoredFile(physicalName)
+}
 
+func (ar *ArchiveReader) readStoredFile(name string) ([]byte, error) {
+	if err := validateArchivePath(name); err != nil {
+		return nil, err
+	}
 	f, err := os.Open(ar.path)
 	if err != nil {
 		return nil, err
@@ -235,7 +291,7 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 		if err := validateTarHeader(hdr); err != nil {
 			return nil, err
 		}
-		if hdr.Name == physicalName {
+		if hdr.Name == name {
 			return io.ReadAll(tr)
 		}
 		if _, err := io.Copy(io.Discard, tr); err != nil {
@@ -245,24 +301,22 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 	return nil, fmt.Errorf("file not found in archive: %s", name)
 }
 
-func (ar *ArchiveReader) physicalPathForRead(name string) (string, error) {
-	if ar.Manifest == nil {
+func (ar *ArchiveReader) storedPathForRead(name string) (string, error) {
+	if ar.Manifest == nil || len(ar.Manifest.Files) == 0 {
 		return name, nil
 	}
-	for _, file := range ar.Manifest.Files {
-		if file.Path != name {
-			continue
-		}
-		if file.Storage == FileStorageBase {
-			return "", fmt.Errorf("file stored in base archive: %s", name)
-		}
-		physicalPath := storedPathForInlineFile(file)
-		if err := validateArchivePath(physicalPath); err != nil {
-			return "", err
-		}
-		return physicalPath, nil
+	file, ok := ar.logicalByPath[name]
+	if !ok {
+		return "", fmt.Errorf("file not listed in archive manifest: %s", name)
 	}
-	return name, nil
+	if file.Storage == FileStorageBase {
+		return "", fmt.Errorf("file stored in base archive: %s", name)
+	}
+	physicalPath := storedPathForInlineFile(file)
+	if err := validateArchivePath(physicalPath); err != nil {
+		return "", err
+	}
+	return physicalPath, nil
 }
 
 // Close releases all resources.
@@ -281,6 +335,7 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 			return fmt.Errorf("duplicate logical manifest path: %s", file.Path)
 		}
 		expected[file.Path] = file
+		ar.logicalByPath[file.Path] = file
 		if file.Storage != FileStorageBase {
 			physicalPath := storedPathForInlineFile(file)
 			if err := validateArchivePath(physicalPath); err != nil {
@@ -290,13 +345,11 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		}
 	}
 
-	actual := map[string]archiveFile{}
 	for _, file := range ar.files {
 		if file.Name != "manifest.json" {
 			if _, ok := allowedPayloads[file.Name]; !ok {
 				return fmt.Errorf("archive contains payload not listed in manifest: %s", file.Name)
 			}
-			actual[file.Name] = file
 		}
 	}
 
@@ -308,14 +361,14 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		if err := validateArchivePath(physicalPath); err != nil {
 			return err
 		}
-		got, ok := actual[physicalPath]
+		got, ok := ar.storedByPath[physicalPath]
 		if !ok {
 			return fmt.Errorf("manifest file missing from archive: %s", path)
 		}
 		if got.Size != want.Size {
 			return fmt.Errorf("archive file size mismatch for %s: got %d, want %d", path, got.Size, want.Size)
 		}
-		sum, err := ar.fileSHA256(path)
+		sum, err := ar.storedFileSHA256(physicalPath)
 		if err != nil {
 			return err
 		}
@@ -333,8 +386,8 @@ func storedPathForInlineFile(file FileManifest) string {
 	return file.Path
 }
 
-func (ar *ArchiveReader) fileSHA256(name string) (string, error) {
-	data, err := ar.ReadFile(name)
+func (ar *ArchiveReader) storedFileSHA256(name string) (string, error) {
+	data, err := ar.readStoredFile(name)
 	if err != nil {
 		return "", err
 	}
@@ -348,26 +401,17 @@ func ExtractArchive(archivePath, destDir string) error {
 	if err != nil {
 		return err
 	}
-	if len(ar.Manifest.Files) > 0 {
-		defer ar.Close()
-		return ar.extractManifestFiles(destDir)
-	}
-	if err := ar.Close(); err != nil {
-		return err
-	}
-	return extractRawArchive(archivePath, destDir)
+	defer ar.Close()
+	return ar.extractManifestFiles(destDir)
 }
 
 func (ar *ArchiveReader) extractManifestFiles(destDir string) error {
-	for _, file := range ar.Manifest.Files {
-		if file.Storage == FileStorageBase {
-			continue
-		}
-		target, err := safeExtractTarget(destDir, file.Path)
+	for _, name := range ar.ListFiles() {
+		target, err := safeExtractTarget(destDir, name)
 		if err != nil {
 			return err
 		}
-		data, err := ar.ReadFile(file.Path)
+		data, err := ar.ReadFile(name)
 		if err != nil {
 			return err
 		}

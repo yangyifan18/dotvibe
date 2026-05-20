@@ -461,6 +461,72 @@ func TestReadArchiveListFilesUsesLogicalManifestPaths(t *testing.T) {
 	}
 }
 
+func TestReadArchiveListFilesSortsLogicalManifestPaths(t *testing.T) {
+	src := t.TempDir()
+	first := filepath.Join(src, "first.txt")
+	second := filepath.Join(src, "second.txt")
+	writeFile(t, first, "first")
+	writeFile(t, second, "second")
+	manifest := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 2}},
+		Files: []FileManifest{
+			{Path: "tool/z.txt", ToolID: "tool", Size: 5, SHA256: mustFileSHA256ForTest(t, first), Category: "config", Storage: FileStorageInline, StoredPath: "objects/first"},
+			{Path: "tool/a.txt", ToolID: "tool", Size: 6, SHA256: mustFileSHA256ForTest(t, second), Category: "config", Storage: FileStorageInline, StoredPath: "objects/second"},
+		},
+	}
+	archivePath := filepath.Join(t.TempDir(), "stored.tar.gz")
+	if err := CreateArchiveWithStoredEntries(archivePath, manifest, []StoredEntry{
+		{SourcePath: first, StoredPath: "objects/first"},
+		{SourcePath: second, StoredPath: "objects/second"},
+	}); err != nil {
+		t.Fatalf("CreateArchiveWithStoredEntries: %v", err)
+	}
+
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	assertStringSetBackup(t, ra.ListFiles(), []string{"tool/a.txt", "tool/z.txt"})
+	if got := ra.ListFiles(); got[0] != "tool/a.txt" || got[1] != "tool/z.txt" {
+		t.Fatalf("ListFiles order = %#v, want sorted logical paths", got)
+	}
+}
+
+func TestReadArchiveRejectsUnknownLogicalPathWhenManifestListsFiles(t *testing.T) {
+	archivePath := createStoredPathArchive(t, "{}")
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	if _, err := ra.ReadFile("objects/sha256/payload"); err == nil {
+		t.Fatal("expected physical payload lookup to fail when manifest lists logical files")
+	}
+	if _, err := ra.ReadFile("tool/missing.json"); err == nil {
+		t.Fatal("expected unknown logical path to fail")
+	}
+}
+
+func TestReadArchiveRejectsBaseStoredReadFile(t *testing.T) {
+	archivePath := createBaseStoredArchive(t)
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	_, err = ra.ReadFile("tool/config.json")
+	if err == nil {
+		t.Fatal("expected base-backed logical read to fail")
+	}
+}
+
 func TestExtractArchiveMaterializesStoredPathAsLogicalPath(t *testing.T) {
 	content := "{}"
 	archivePath := createStoredPathArchive(t, content)
@@ -478,6 +544,13 @@ func TestExtractArchiveMaterializesStoredPathAsLogicalPath(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dest, "objects/sha256/payload")); !os.IsNotExist(err) {
 		t.Fatalf("stored payload path should not be materialized directly: %v", err)
+	}
+}
+
+func TestExtractArchiveFailsOnBaseStoredManifestFile(t *testing.T) {
+	err := ExtractArchive(createBaseStoredArchive(t), t.TempDir())
+	if err == nil {
+		t.Fatal("expected base-backed extract to fail")
 	}
 }
 
@@ -522,6 +595,59 @@ func TestCreateArchiveRejectsUnsafeArchivePath(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsafe archive path to fail")
+	}
+}
+
+func createBaseStoredArchive(t *testing.T) string {
+	t.Helper()
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 1}},
+		Files: []FileManifest{
+			{
+				Path:     "tool/config.json",
+				ToolID:   "tool",
+				Size:     2,
+				SHA256:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Category: "config",
+				Storage:  FileStorageBase,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	return createRawArchive(t, map[string]string{"manifest.json": string(data)})
+}
+
+func mustFileSHA256ForTest(t *testing.T, path string) string {
+	t.Helper()
+	sum, err := sourceFileSHA256(path)
+	if err != nil {
+		t.Fatalf("sourceFileSHA256(%s): %v", path, err)
+	}
+	return sum
+}
+
+func assertStringSetBackup(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("len(got) = %d, want %d; got %#v want %#v", len(got), len(want), got, want)
+	}
+	counts := map[string]int{}
+	for _, item := range got {
+		counts[item]++
+	}
+	for _, item := range want {
+		counts[item]--
+	}
+	for item, count := range counts {
+		if count != 0 {
+			t.Fatalf("set mismatch for %q: got %#v want %#v", item, got, want)
+		}
 	}
 }
 
