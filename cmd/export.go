@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,6 +19,7 @@ var (
 	exportOnly     string
 	exportExcludes []string
 	exportForce    bool
+	exportBase     string
 )
 
 var exportCmd = &cobra.Command{
@@ -42,6 +44,22 @@ var exportCmd = &cobra.Command{
 		}
 		if _, err := os.Stat(output); err == nil && !exportForce {
 			return fmt.Errorf("output file already exists: %s (use --force to overwrite)", output)
+		}
+
+		var baseManifest *backup.Manifest
+		var baseRef backup.BaseArchiveRef
+		if exportBase != "" {
+			baseArchive, err := backup.ReadArchive(exportBase)
+			if err != nil {
+				return fmt.Errorf("failed to read base archive: %w", err)
+			}
+			defer baseArchive.Close()
+			baseManifest = baseArchive.Manifest
+			baseRef = backup.BaseArchiveRef{
+				FileName:       filepath.Base(exportBase),
+				Created:        baseManifest.Created,
+				ManifestSHA256: baseArchive.ManifestDigest(),
+			}
 		}
 
 		var allEntries []adapters.FileEntry
@@ -104,13 +122,29 @@ var exportCmd = &cobra.Command{
 			Tools:    toolManifests,
 		}
 
-		fmt.Printf("Creating backup (%d files)... ", len(allEntries))
-		if err := backup.CreateArchive(output, manifest, allEntries); err != nil {
+		var plan backup.ArchivePlan
+		var err error
+		if exportBase != "" {
+			fmt.Printf("Creating incremental backup against %s (%d files)... ", exportBase, len(allEntries))
+			plan, err = backup.BuildIncrementalArchivePlan(manifest, allEntries, baseManifest, baseRef)
+		} else {
+			fmt.Printf("Creating backup (%d files)... ", len(allEntries))
+			plan, err = backup.BuildFullArchivePlan(manifest, allEntries)
+		}
+		if err != nil {
+			return fmt.Errorf("failed to plan archive: %w", err)
+		}
+		if err := backup.CreateArchiveWithStoredEntries(output, plan.Manifest, plan.StoredEntries); err != nil {
 			return fmt.Errorf("failed to create archive: %w", err)
 		}
 
 		info, _ := os.Stat(output)
-		fmt.Printf("done.\n  -> %s (%s)\n", output, formatSize(info.Size()))
+		if exportBase != "" {
+			fmt.Printf("done. added=%d changed=%d reused=%d\n", plan.Added, plan.Changed, plan.Reused)
+		} else {
+			fmt.Printf("done.\n")
+		}
+		fmt.Printf("  -> %s (%s)\n", output, formatSize(info.Size()))
 		return nil
 	},
 }
@@ -126,6 +160,7 @@ func init() {
 	exportCmd.Flags().StringVar(&exportOnly, "only", "", "only backup specified tools (comma-separated)")
 	exportCmd.Flags().StringSliceVar(&exportExcludes, "exclude", nil, "exclude matching paths (glob patterns)")
 	exportCmd.Flags().BoolVar(&exportForce, "force", false, "overwrite output file if it already exists")
+	exportCmd.Flags().StringVar(&exportBase, "base", "", "base archive for incremental export")
 	rootCmd.AddCommand(exportCmd)
 }
 

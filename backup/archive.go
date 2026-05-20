@@ -204,6 +204,7 @@ type ArchiveReader struct {
 	f             *os.File
 	path          string
 	Manifest      *Manifest
+	manifestRaw   []byte
 	files         []archiveFile
 	storedByPath  map[string]archiveFile
 	logicalByPath map[string]FileManifest
@@ -234,6 +235,14 @@ func ReadArchive(path string) (*ArchiveReader, error) {
 	}
 
 	return ar, nil
+}
+
+func (ar *ArchiveReader) ManifestDigest() string {
+	if len(ar.manifestRaw) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(ar.manifestRaw)
+	return fmt.Sprintf("%x", sum)
 }
 
 func (ar *ArchiveReader) index() error {
@@ -270,6 +279,7 @@ func (ar *ArchiveReader) index() error {
 			if err != nil {
 				return err
 			}
+			ar.manifestRaw = append([]byte(nil), data...)
 			var m Manifest
 			if err := json.Unmarshal(data, &m); err != nil {
 				return err
