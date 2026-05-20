@@ -174,7 +174,11 @@ func toolIDFromDiffArchivePath(path string) string {
 }
 
 func inferDiffCategoryFromArchivePath(path string) string {
-	for _, segment := range strings.Split(path, "/") {
+	segments := strings.Split(path, "/")
+	if category := inferAdapterSpecificDiffCategory(segments); category != "" {
+		return category
+	}
+	for _, segment := range segments {
 		switch segment {
 		case adapters.CategoryConfig:
 			return adapters.CategoryConfig
@@ -184,6 +188,31 @@ func inferDiffCategoryFromArchivePath(path string) string {
 			return adapters.CategorySkills
 		case adapters.CategoryHistory, "sessions", "transcripts", "todos":
 			return adapters.CategoryHistory
+		}
+	}
+	return ""
+}
+
+func inferAdapterSpecificDiffCategory(segments []string) string {
+	if len(segments) < 2 {
+		return ""
+	}
+	switch segments[0] {
+	case "opencode":
+		switch segments[1] {
+		case "xdg-config", "home-config":
+			return adapters.CategoryConfig
+		}
+	case "codex-cli":
+		if segments[1] == "agents" {
+			return adapters.CategorySkills
+		}
+	case "claude-code":
+		if segments[1] == "history.jsonl" {
+			return adapters.CategoryHistory
+		}
+		if len(segments) >= 4 && segments[1] == "projects" && segments[len(segments)-1] == "CLAUDE.md" {
+			return adapters.CategoryMemory
 		}
 	}
 	return ""

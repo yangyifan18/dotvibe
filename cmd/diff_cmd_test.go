@@ -87,6 +87,59 @@ func TestDiffArchivesFiltersLegacyFilesByInferredCategory(t *testing.T) {
 	assertStringSet(t, diff.Unchanged, []string{"claude-code/memory/same.md"})
 }
 
+func TestDiffArchivesInfersAdapterSpecificLegacyCategories(t *testing.T) {
+	tests := []struct {
+		name     string
+		category string
+		path     string
+	}{
+		{
+			name:     "opencode xdg config",
+			category: adapters.CategoryConfig,
+			path:     "opencode/xdg-config/opencode.json",
+		},
+		{
+			name:     "opencode home config",
+			category: adapters.CategoryConfig,
+			path:     "opencode/home-config/.opencode.json",
+		},
+		{
+			name:     "codex agents",
+			category: adapters.CategorySkills,
+			path:     "codex-cli/agents/reviewer.md",
+		},
+		{
+			name:     "claude project memory",
+			category: adapters.CategoryMemory,
+			path:     "claude-code/projects/example/CLAUDE.md",
+		},
+		{
+			name:     "claude history",
+			category: adapters.CategoryHistory,
+			path:     "claude-code/history.jsonl",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			left := createLegacyDiffArchiveNoFiles(t, map[string]string{
+				"other-tool/misc/settings.json": "ignore",
+			})
+			right := createLegacyDiffArchiveNoFiles(t, map[string]string{
+				"other-tool/misc/settings.json": "ignore-new",
+				tt.path:                         "added",
+			})
+
+			diff, err := diffArchivesWithOptions(left, right, diffOptions{Category: tt.category})
+			if err != nil {
+				t.Fatalf("diffArchivesWithOptions: %v", err)
+			}
+			assertStringSet(t, diff.Added, []string{tt.path})
+			assertStringSet(t, diff.Changed, []string{})
+		})
+	}
+}
+
 func TestDiffArchivesComparesLegacyFallbackFileChecksums(t *testing.T) {
 	left := createLegacyDiffArchiveNoFiles(t, map[string]string{
 		"tool/config/settings.json": "old",
