@@ -947,6 +947,79 @@ func TestOpenArchiveSetReadsBaseStoredFileFromMatchingBase(t *testing.T) {
 	}
 }
 
+func TestOpenArchiveSetReadsBaseStoredFileFromFingerprintMatchedBase(t *testing.T) {
+	dir := t.TempDir()
+	wrongPayload := filepath.Join(dir, "wrong-memory.md")
+	correctPayload := filepath.Join(dir, "correct-memory.md")
+	writeFile(t, wrongPayload, "# wrong memory\n")
+	writeFile(t, correctPayload, "# correct memory\n")
+	wrongBasePath := filepath.Join(dir, "wrong-base.tar.gz")
+	correctBasePath := filepath.Join(dir, "correct-base.tar.gz")
+	baseManifest := func() *Manifest {
+		return &Manifest{
+			Version:       "1.0.0",
+			FormatVersion: 2,
+			ArchiveKind:   ArchiveKindFull,
+			Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		}
+	}
+	for _, tt := range []struct {
+		path    string
+		payload string
+	}{
+		{wrongBasePath, wrongPayload},
+		{correctBasePath, correctPayload},
+	} {
+		if err := CreateArchive(tt.path, baseManifest(), []adapters.FileEntry{{
+			SourcePath: tt.payload,
+			InArchive:  "tool/memory.md",
+			Category:   "memory",
+		}}); err != nil {
+			t.Fatalf("CreateArchive %s: %v", tt.path, err)
+		}
+	}
+	correctReader, err := ReadArchive(correctBasePath)
+	if err != nil {
+		t.Fatalf("ReadArchive correct base: %v", err)
+	}
+	correctDigest := correctReader.ManifestDigest()
+	if err := correctReader.Close(); err != nil {
+		t.Fatalf("Close correct base: %v", err)
+	}
+
+	headPath := filepath.Join(dir, "delta.tar.gz")
+	headManifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Base:          &BaseArchiveRef{FileName: "correct-base.tar.gz", ManifestSHA256: correctDigest},
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		Files: []FileManifest{{
+			Path:     "tool/memory.md",
+			ToolID:   "tool",
+			Size:     int64(len("# correct memory\n")),
+			SHA256:   mustFileSHA256ForTest(t, correctPayload),
+			Category: "memory",
+			Storage:  FileStorageBase,
+		}},
+	}
+	writeManifestOnlyArchive(t, headPath, headManifest)
+
+	set, err := OpenArchiveSet(headPath, []string{wrongBasePath, correctBasePath})
+	if err != nil {
+		t.Fatalf("OpenArchiveSet: %v", err)
+	}
+	defer set.Close()
+
+	got, err := set.ReadFile("tool/memory.md")
+	if err != nil {
+		t.Fatalf("ReadFile from fingerprint-matched base: %v", err)
+	}
+	if string(got) != "# correct memory\n" {
+		t.Fatalf("content = %q, want fingerprint-matched base content", string(got))
+	}
+}
+
 func TestOpenArchiveSetFailsWhenRequiredBaseMissing(t *testing.T) {
 	headPath := filepath.Join(t.TempDir(), "delta.tar.gz")
 	wantDigest := strings.Repeat("a", 64)

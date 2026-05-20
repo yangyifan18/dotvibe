@@ -219,17 +219,23 @@ type archiveFile struct {
 
 // ArchiveSet reads a head archive together with optional base archives.
 type ArchiveSet struct {
-	Head  *ArchiveReader
-	Bases []*ArchiveReader
+	Head         *ArchiveReader
+	Bases        []*ArchiveReader
+	baseByDigest map[string]*ArchiveReader
 }
 
 // OpenArchiveSet opens a head archive and any bases needed to read base-backed files.
 func OpenArchiveSet(headPath string, basePaths []string) (*ArchiveSet, error) {
+	return OpenArchiveSetForFiles(headPath, basePaths, nil)
+}
+
+// OpenArchiveSetForFiles opens a head archive and validates bases needed by selected logical files.
+func OpenArchiveSetForFiles(headPath string, basePaths []string, selected []string) (*ArchiveSet, error) {
 	head, err := ReadArchive(headPath)
 	if err != nil {
 		return nil, err
 	}
-	set := &ArchiveSet{Head: head}
+	set := &ArchiveSet{Head: head, baseByDigest: map[string]*ArchiveReader{}}
 	for _, basePath := range basePaths {
 		base, err := ReadArchive(basePath)
 		if err != nil {
@@ -237,40 +243,58 @@ func OpenArchiveSet(headPath string, basePaths []string) (*ArchiveSet, error) {
 			return nil, err
 		}
 		set.Bases = append(set.Bases, base)
+		set.baseByDigest[base.ManifestDigest()] = base
 	}
-	if err := set.validateRequiredBase(); err != nil {
+	if err := set.validateRequiredBaseForFiles(selected); err != nil {
 		set.Close()
 		return nil, err
 	}
 	return set, nil
 }
 
-func (set *ArchiveSet) validateRequiredBase() error {
+func (set *ArchiveSet) validateRequiredBaseForFiles(selected []string) error {
 	if set == nil || set.Head == nil || set.Head.Manifest == nil {
 		return fmt.Errorf("archive set missing head manifest")
 	}
-	if set.headUsesBaseStorage() && set.Head.Manifest.Base == nil {
-		return fmt.Errorf("incremental archive contains base-backed files but has no base fingerprint")
+	files, err := set.filesForValidation(selected)
+	if err != nil {
+		return err
 	}
-	if set.Head.Manifest.Base == nil {
-		return nil
-	}
-	want := set.Head.Manifest.Base.ManifestSHA256
-	for _, base := range set.Bases {
-		if base.ManifestDigest() == want {
-			return nil
+	for _, file := range files {
+		if file.Storage != FileStorageBase {
+			continue
+		}
+		if set.Head.Manifest.Base == nil {
+			return fmt.Errorf("base-backed file %s has no base fingerprint", file.Path)
+		}
+		if _, ok := set.baseByDigest[set.Head.Manifest.Base.ManifestSHA256]; !ok {
+			return fmt.Errorf("required base archive missing for %s: expected manifest sha256 %s", file.Path, set.Head.Manifest.Base.ManifestSHA256)
 		}
 	}
-	return fmt.Errorf("required base archive missing: expected manifest sha256 %s", want)
+	return nil
 }
 
-func (set *ArchiveSet) headUsesBaseStorage() bool {
-	for _, file := range set.Head.Manifest.Files {
-		if file.Storage == FileStorageBase {
-			return true
-		}
+func (set *ArchiveSet) filesForValidation(selected []string) ([]FileManifest, error) {
+	names := selected
+	if names == nil {
+		names = set.Head.ListFiles()
 	}
-	return false
+	files := make([]FileManifest, 0, len(names))
+	for _, name := range names {
+		if err := validateArchivePath(name); err != nil {
+			return nil, err
+		}
+		file, ok := set.Head.logicalByPath[name]
+		if !ok {
+			if len(set.Head.logicalByPath) == 0 {
+				files = append(files, FileManifest{Path: name, Storage: FileStorageInline})
+				continue
+			}
+			return nil, fmt.Errorf("file not listed in archive manifest: %s", name)
+		}
+		files = append(files, file)
+	}
+	return files, nil
 }
 
 // Close releases resources for all archives in the set.
@@ -307,44 +331,62 @@ func (set *ArchiveSet) ReadFile(name string) ([]byte, error) {
 	}
 	file, ok := set.Head.logicalByPath[name]
 	if !ok || file.Storage == FileStorageInline {
-		return set.Head.ReadFile(name)
+		data, err := set.Head.ReadFile(name)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			if err := verifyReadData(name, data, file); err != nil {
+				return nil, err
+			}
+		}
+		return data, nil
 	}
 	if file.Storage != FileStorageBase {
 		return nil, fmt.Errorf("unsupported file storage for %s: %s", name, file.Storage)
 	}
-	for _, base := range set.Bases {
-		if !baseContainsLogicalPath(base, name) {
-			continue
-		}
-		data, err := base.ReadFile(name)
-		if err == nil {
-			return data, nil
-		}
-		if !strings.Contains(err.Error(), "file stored in base archive") {
-			return nil, err
-		}
+	data, err := set.readBaseBackedFile(set.Head, name, map[string]struct{}{})
+	if err != nil {
+		return nil, err
 	}
-	expected := ""
-	if set.Head.Manifest != nil && set.Head.Manifest.Base != nil {
-		expected = set.Head.Manifest.Base.ManifestSHA256
+	if err := verifyReadData(name, data, file); err != nil {
+		return nil, err
 	}
-	return nil, fmt.Errorf("base-backed file %s not found in provided base archives; expected base manifest sha256 %s", name, expected)
+	return data, nil
 }
 
-func baseContainsLogicalPath(base *ArchiveReader, name string) bool {
-	if base == nil {
-		return false
+func (set *ArchiveSet) readBaseBackedFile(reader *ArchiveReader, name string, seen map[string]struct{}) ([]byte, error) {
+	if reader.Manifest == nil || reader.Manifest.Base == nil {
+		return nil, fmt.Errorf("base-backed file %s has no base fingerprint", name)
 	}
-	if len(base.logicalByPath) > 0 {
-		_, ok := base.logicalByPath[name]
-		return ok
+	digest := reader.Manifest.Base.ManifestSHA256
+	if _, ok := seen[digest]; ok {
+		return nil, fmt.Errorf("base archive cycle while reading %s at manifest sha256 %s", name, digest)
 	}
-	for _, file := range base.ListFiles() {
-		if file == name {
-			return true
-		}
+	seen[digest] = struct{}{}
+	base, ok := set.baseByDigest[digest]
+	if !ok {
+		return nil, fmt.Errorf("required base archive missing for %s: expected manifest sha256 %s", name, digest)
 	}
-	return false
+	file, ok := base.logicalByPath[name]
+	if !ok && len(base.logicalByPath) > 0 {
+		return nil, fmt.Errorf("base archive %s does not contain logical file %s", digest, name)
+	}
+	if ok && file.Storage == FileStorageBase {
+		return set.readBaseBackedFile(base, name, seen)
+	}
+	return base.ReadFile(name)
+}
+
+func verifyReadData(name string, data []byte, file FileManifest) error {
+	if int64(len(data)) != file.Size {
+		return fmt.Errorf("archive file size mismatch for %s: got %d, want %d", name, len(data), file.Size)
+	}
+	sum := sha256.Sum256(data)
+	if got := fmt.Sprintf("%x", sum); got != file.SHA256 {
+		return fmt.Errorf("archive file checksum mismatch for %s", name)
+	}
+	return nil
 }
 
 // ReadArchive opens and indexes an archive.
@@ -617,13 +659,22 @@ func ExtractArchive(archivePath, destDir string) error {
 
 // ExtractArchiveSet materializes the head archive's logical files, reading base-backed payloads from bases.
 func ExtractArchiveSet(headPath string, basePaths []string, destDir string) error {
-	set, err := OpenArchiveSet(headPath, basePaths)
+	return ExtractArchiveSetFiles(headPath, basePaths, destDir, nil)
+}
+
+// ExtractArchiveSetFiles materializes selected logical files from an archive set.
+func ExtractArchiveSetFiles(headPath string, basePaths []string, destDir string, selected []string) error {
+	set, err := OpenArchiveSetForFiles(headPath, basePaths, selected)
 	if err != nil {
 		return err
 	}
 	defer set.Close()
 
-	for _, name := range set.ListFiles() {
+	names := selected
+	if names == nil {
+		names = set.ListFiles()
+	}
+	for _, name := range names {
 		target, err := safeExtractTarget(destDir, name)
 		if err != nil {
 			return err

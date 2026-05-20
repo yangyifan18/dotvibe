@@ -121,6 +121,44 @@ func TestImportWithMatchingBaseChainRestoresBaseBackedFile(t *testing.T) {
 	}
 }
 
+func TestImportOnlyInlineSubsetDoesNotRequireBaseForUnselectedFiles(t *testing.T) {
+	archivePath := makeMixedInlineAndBaseBackedImportArchive(t)
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce, oldBases := importDryRun, importYes, importOnly, importProject, importForce, importBases
+	defer func() {
+		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+		importBases = oldBases
+	}()
+	importDryRun = true
+	importYes = true
+	importOnly = "claude-code"
+	importProject = ""
+	importForce = false
+	importBases = nil
+
+	if err := importCmd.RunE(importCmd, []string{archivePath}); err != nil {
+		t.Fatalf("filtered inline dry-run should not require unrelated base-backed file: %v", err)
+	}
+}
+
+func TestImportInlineOnlyIncrementalDoesNotRequireBase(t *testing.T) {
+	archivePath := makeInlineOnlyIncrementalImportArchive(t)
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce, oldBases := importDryRun, importYes, importOnly, importProject, importForce, importBases
+	defer func() {
+		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+		importBases = oldBases
+	}()
+	importDryRun = true
+	importYes = true
+	importOnly = ""
+	importProject = ""
+	importForce = false
+	importBases = nil
+
+	if err := importCmd.RunE(importCmd, []string{archivePath}); err != nil {
+		t.Fatalf("inline-only incremental dry-run should not require base: %v", err)
+	}
+}
+
 func makeImportTestArchive(t *testing.T) string {
 	t.Helper()
 	src := t.TempDir()
@@ -140,6 +178,86 @@ func makeImportTestArchive(t *testing.T) string {
 	}}
 	if err := backup.CreateArchive(archivePath, manifest, entries); err != nil {
 		t.Fatalf("CreateArchive: %v", err)
+	}
+	return archivePath
+}
+
+func makeMixedInlineAndBaseBackedImportArchive(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	inlinePayload := filepath.Join(dir, "settings.json")
+	writeFileForImportTest(t, inlinePayload, `{"theme":"dark"}`)
+	archivePath := filepath.Join(dir, "mixed-incremental.tar.gz")
+	inlineSHA := mustSHA256ForImportTest(t, inlinePayload)
+	manifest := &backup.Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   backup.ArchiveKindIncremental,
+		Base:          &backup.BaseArchiveRef{FileName: "base.tar.gz", ManifestSHA256: strings.Repeat("a", 64)},
+		Tools: map[string]backup.ToolManifest{
+			"claude-code": {Included: []string{"config"}, FileCount: 1},
+			"codex-cli":   {Included: []string{"config"}, FileCount: 1},
+		},
+		Files: []backup.FileManifest{
+			{
+				Path:       "claude-code/config/settings.json",
+				ToolID:     "claude-code",
+				Size:       int64(len(`{"theme":"dark"}`)),
+				SHA256:     inlineSHA,
+				Category:   adapters.CategoryConfig,
+				Storage:    backup.FileStorageInline,
+				StoredPath: "objects/claude-settings",
+			},
+			{
+				Path:     "codex-cli/config/config.toml",
+				ToolID:   "codex-cli",
+				Size:     6,
+				SHA256:   strings.Repeat("b", 64),
+				Category: adapters.CategoryConfig,
+				Storage:  backup.FileStorageBase,
+			},
+		},
+	}
+	if err := backup.CreateArchiveWithStoredEntries(archivePath, manifest, []backup.StoredEntry{{
+		SourcePath: inlinePayload,
+		StoredPath: "objects/claude-settings",
+	}}); err != nil {
+		t.Fatalf("CreateArchiveWithStoredEntries mixed: %v", err)
+	}
+	return archivePath
+}
+
+func makeInlineOnlyIncrementalImportArchive(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	inlinePayload := filepath.Join(dir, "settings.json")
+	writeFileForImportTest(t, inlinePayload, `{"theme":"dark"}`)
+	archivePath := filepath.Join(dir, "inline-incremental.tar.gz")
+	manifest := &backup.Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   backup.ArchiveKindIncremental,
+		Base:          &backup.BaseArchiveRef{FileName: "base.tar.gz", ManifestSHA256: strings.Repeat("a", 64)},
+		Tools: map[string]backup.ToolManifest{
+			"claude-code": {Included: []string{"config"}, FileCount: 1},
+		},
+		Files: []backup.FileManifest{
+			{
+				Path:       "claude-code/config/settings.json",
+				ToolID:     "claude-code",
+				Size:       int64(len(`{"theme":"dark"}`)),
+				SHA256:     mustSHA256ForImportTest(t, inlinePayload),
+				Category:   adapters.CategoryConfig,
+				Storage:    backup.FileStorageInline,
+				StoredPath: "objects/claude-settings",
+			},
+		},
+	}
+	if err := backup.CreateArchiveWithStoredEntries(archivePath, manifest, []backup.StoredEntry{{
+		SourcePath: inlinePayload,
+		StoredPath: "objects/claude-settings",
+	}}); err != nil {
+		t.Fatalf("CreateArchiveWithStoredEntries inline-only: %v", err)
 	}
 	return archivePath
 }

@@ -24,14 +24,16 @@ var importCmd = &cobra.Command{
 	Short: "Restore from a backup",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		set, err := backup.OpenArchiveSet(args[0], importBases)
+		head, err := backup.ReadArchive(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to read archive: %w", err)
 		}
-		defer set.Close()
 
-		m := set.Manifest()
-		files := set.ListFiles()
+		m := head.Manifest
+		files := head.ListFiles()
+		if err := head.Close(); err != nil {
+			return err
+		}
 
 		// Group files by tool
 		toolFiles := map[string][]adapters.FileEntry{}
@@ -64,6 +66,12 @@ var importCmd = &cobra.Command{
 		if countImportEntries(toolFiles) == 0 {
 			return fmt.Errorf("no files match the selected import filters")
 		}
+		selectedFiles := flattenImportFiles(toolFiles)
+		set, err := backup.OpenArchiveSetForFiles(args[0], importBases, selectedFiles)
+		if err != nil {
+			return fmt.Errorf("failed to read archive: %w", err)
+		}
+		defer set.Close()
 
 		// Show what will be restored
 		fmt.Println("Backup contents:")
@@ -105,7 +113,7 @@ var importCmd = &cobra.Command{
 		}
 		defer os.RemoveAll(tmpDir)
 
-		if err := backup.ExtractArchiveSet(args[0], importBases, tmpDir); err != nil {
+		if err := backup.ExtractArchiveSetFiles(args[0], importBases, tmpDir, selectedFiles); err != nil {
 			return fmt.Errorf("failed to extract archive: %w", err)
 		}
 
@@ -172,6 +180,16 @@ func countImportEntries(toolFiles map[string][]adapters.FileEntry) int {
 		total += len(entries)
 	}
 	return total
+}
+
+func flattenImportFiles(toolFiles map[string][]adapters.FileEntry) []string {
+	var files []string
+	for _, entries := range toolFiles {
+		for _, entry := range entries {
+			files = append(files, entry.InArchive)
+		}
+	}
+	return files
 }
 
 func buildRestorePreview(toolFiles map[string][]adapters.FileEntry, opts adapters.RestoreOpts) ([]adapters.RestorePlanEntry, error) {
