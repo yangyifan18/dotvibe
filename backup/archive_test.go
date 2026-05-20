@@ -886,3 +886,122 @@ func TestReadArchiveAllowsBaseStoredManifestFileWithoutPayload(t *testing.T) {
 		t.Fatalf("file storage = %q, want %q", ra.Manifest.Files[0].Storage, FileStorageBase)
 	}
 }
+
+func TestOpenArchiveSetReadsBaseStoredFileFromMatchingBase(t *testing.T) {
+	dir := t.TempDir()
+	basePayload := filepath.Join(dir, "base-memory.md")
+	writeFile(t, basePayload, "# base memory\n")
+	basePath := filepath.Join(dir, "base.tar.gz")
+	baseManifest := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+	}
+	if err := CreateArchive(basePath, baseManifest, []adapters.FileEntry{{
+		SourcePath: basePayload,
+		InArchive:  "tool/memory.md",
+		Category:   "memory",
+	}}); err != nil {
+		t.Fatalf("CreateArchive base: %v", err)
+	}
+	baseReader, err := ReadArchive(basePath)
+	if err != nil {
+		t.Fatalf("ReadArchive base: %v", err)
+	}
+	baseDigest := baseReader.ManifestDigest()
+	if err := baseReader.Close(); err != nil {
+		t.Fatalf("Close base: %v", err)
+	}
+
+	headPath := filepath.Join(dir, "delta.tar.gz")
+	headManifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Base:          &BaseArchiveRef{FileName: "base.tar.gz", ManifestSHA256: baseDigest},
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		Files: []FileManifest{{
+			Path:     "tool/memory.md",
+			ToolID:   "tool",
+			Size:     int64(len("# base memory\n")),
+			SHA256:   mustFileSHA256ForTest(t, basePayload),
+			Category: "memory",
+			Storage:  FileStorageBase,
+		}},
+	}
+	writeManifestOnlyArchive(t, headPath, headManifest)
+
+	set, err := OpenArchiveSet(headPath, []string{basePath})
+	if err != nil {
+		t.Fatalf("OpenArchiveSet: %v", err)
+	}
+	defer set.Close()
+
+	got, err := set.ReadFile("tool/memory.md")
+	if err != nil {
+		t.Fatalf("ReadFile from base: %v", err)
+	}
+	if string(got) != "# base memory\n" {
+		t.Fatalf("content = %q, want base content", string(got))
+	}
+}
+
+func TestOpenArchiveSetFailsWhenRequiredBaseMissing(t *testing.T) {
+	headPath := filepath.Join(t.TempDir(), "delta.tar.gz")
+	wantDigest := strings.Repeat("a", 64)
+	headManifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Base:          &BaseArchiveRef{FileName: "base.tar.gz", ManifestSHA256: wantDigest},
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		Files: []FileManifest{{
+			Path:     "tool/memory.md",
+			ToolID:   "tool",
+			Size:     13,
+			SHA256:   strings.Repeat("b", 64),
+			Category: "memory",
+			Storage:  FileStorageBase,
+		}},
+	}
+	writeManifestOnlyArchive(t, headPath, headManifest)
+
+	_, err := OpenArchiveSet(headPath, nil)
+	if err == nil {
+		t.Fatal("expected missing base to fail")
+	}
+	if !strings.Contains(err.Error(), wantDigest) {
+		t.Fatalf("error = %q, want expected base fingerprint %s", err.Error(), wantDigest)
+	}
+}
+
+func writeManifestOnlyArchive(t *testing.T, archivePath string, manifest Manifest) {
+	t.Helper()
+	manifest.Normalize()
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0644, Size: int64(len(data))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

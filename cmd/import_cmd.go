@@ -16,6 +16,7 @@ var (
 	importProject string
 	importForce   bool
 	importDryRun  bool
+	importBases   []string
 )
 
 var importCmd = &cobra.Command{
@@ -23,17 +24,14 @@ var importCmd = &cobra.Command{
 	Short: "Restore from a backup",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ar, err := backup.ReadArchive(args[0])
+		set, err := backup.OpenArchiveSet(args[0], importBases)
 		if err != nil {
 			return fmt.Errorf("failed to read archive: %w", err)
 		}
-		defer ar.Close()
+		defer set.Close()
 
-		m := ar.Manifest
-		if manifestRequiresBaseArchive(m) {
-			return fmt.Errorf("archive contains base-backed incremental files; --base is required but archive chain import is not implemented yet")
-		}
-		files := ar.ListFiles()
+		m := set.Manifest()
+		files := set.ListFiles()
 
 		// Group files by tool
 		toolFiles := map[string][]adapters.FileEntry{}
@@ -107,7 +105,7 @@ var importCmd = &cobra.Command{
 		}
 		defer os.RemoveAll(tmpDir)
 
-		if err := backup.ExtractArchive(args[0], tmpDir); err != nil {
+		if err := backup.ExtractArchiveSet(args[0], importBases, tmpDir); err != nil {
 			return fmt.Errorf("failed to extract archive: %w", err)
 		}
 
@@ -142,24 +140,13 @@ var importCmd = &cobra.Command{
 	},
 }
 
-func manifestRequiresBaseArchive(m *backup.Manifest) bool {
-	if m.ArchiveKind == backup.ArchiveKindIncremental || m.Base != nil {
-		return true
-	}
-	for _, file := range m.Files {
-		if file.Storage == backup.FileStorageBase {
-			return true
-		}
-	}
-	return false
-}
-
 func init() {
 	importCmd.Flags().BoolVarP(&importYes, "yes", "y", false, "skip confirmation")
 	importCmd.Flags().StringVar(&importOnly, "only", "", "only restore specified tools")
 	importCmd.Flags().StringVar(&importProject, "project", "", "restore specific project only")
 	importCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview restore without writing files")
+	importCmd.Flags().StringSliceVar(&importBases, "base", nil, "base archive for incremental restore; repeat or comma-separate for a chain")
 	rootCmd.AddCommand(importCmd)
 }
 

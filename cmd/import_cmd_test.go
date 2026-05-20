@@ -3,7 +3,9 @@ package cmd
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,39 +45,79 @@ func TestFilterImportEntriesByProjectKeepsNonClaudeTools(t *testing.T) {
 
 func TestImportDryRunReturnsBeforeConfirmation(t *testing.T) {
 	archivePath := makeImportTestArchive(t)
-	oldDryRun, oldYes, oldOnly, oldProject, oldForce := importDryRun, importYes, importOnly, importProject, importForce
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce, oldBases := importDryRun, importYes, importOnly, importProject, importForce, importBases
 	defer func() {
 		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+		importBases = oldBases
 	}()
 	importDryRun = true
 	importYes = false
 	importOnly = ""
 	importProject = ""
 	importForce = false
+	importBases = nil
 
 	if err := importCmd.RunE(importCmd, []string{archivePath}); err != nil {
 		t.Fatalf("dry-run import failed: %v", err)
 	}
 }
 
-func TestImportRejectsBaseBackedArchiveUntilBaseFlagExists(t *testing.T) {
-	archivePath := makeBaseBackedImportArchive(t)
-	oldDryRun, oldYes, oldOnly, oldProject, oldForce := importDryRun, importYes, importOnly, importProject, importForce
+func TestImportMissingBaseFailsBeforeRestoreWrites(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	archivePath, _, expectedDigest := makeIncrementalImportArchivePair(t)
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce, oldBases := importDryRun, importYes, importOnly, importProject, importForce, importBases
 	defer func() {
 		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+		importBases = oldBases
 	}()
-	importDryRun = true
+	importDryRun = false
 	importYes = true
 	importOnly = ""
 	importProject = ""
 	importForce = false
+	importBases = nil
 
 	err := importCmd.RunE(importCmd, []string{archivePath})
 	if err == nil {
-		t.Fatal("expected base-backed import to be rejected")
+		t.Fatal("expected missing base import to fail")
 	}
-	if !strings.Contains(err.Error(), "--base") {
-		t.Fatalf("error = %q, want mention --base", err.Error())
+	if !strings.Contains(err.Error(), expectedDigest) {
+		t.Fatalf("error = %q, want expected base fingerprint %s", err.Error(), expectedDigest)
+	}
+	target := filepath.Join(home, ".claude", "projects", "-Users-young-App", "memory", "MEMORY.md")
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Fatalf("restore wrote target before validating base chain: %v", statErr)
+	}
+}
+
+func TestImportWithMatchingBaseChainRestoresBaseBackedFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	archivePath, basePath, _ := makeIncrementalImportArchivePair(t)
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce, oldBases := importDryRun, importYes, importOnly, importProject, importForce, importBases
+	defer func() {
+		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+		importBases = oldBases
+	}()
+	importDryRun = false
+	importYes = true
+	importOnly = "claude-code"
+	importProject = "-Users-young-App"
+	importForce = false
+	importBases = []string{basePath}
+
+	if err := importCmd.RunE(importCmd, []string{archivePath}); err != nil {
+		t.Fatalf("import with base chain failed: %v", err)
+	}
+
+	target := filepath.Join(home, ".claude", "projects", "-Users-young-App", "memory", "MEMORY.md")
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read restored file: %v", err)
+	}
+	if string(got) != "# base memory" {
+		t.Fatalf("restored content = %q, want base content", string(got))
 	}
 }
 
@@ -158,6 +200,107 @@ func makeBaseBackedImportArchive(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return archivePath
+}
+
+func makeIncrementalImportArchivePair(t *testing.T) (headPath, basePath, baseDigest string) {
+	t.Helper()
+	dir := t.TempDir()
+	basePayload := filepath.Join(dir, "MEMORY.md")
+	writeFileForImportTest(t, basePayload, "# base memory")
+	basePath = filepath.Join(dir, "base.tar.gz")
+	baseManifest := &backup.Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   backup.ArchiveKindFull,
+		Tools: map[string]backup.ToolManifest{
+			"claude-code": {Included: []string{"memory"}, FileCount: 1},
+		},
+	}
+	logicalPath := "claude-code/projects/-Users-young-App/memory/MEMORY.md"
+	if err := backup.CreateArchive(basePath, baseManifest, []adapters.FileEntry{{
+		SourcePath: basePayload,
+		InArchive:  logicalPath,
+		Category:   adapters.CategoryMemory,
+	}}); err != nil {
+		t.Fatalf("CreateArchive base: %v", err)
+	}
+	baseReader, err := backup.ReadArchive(basePath)
+	if err != nil {
+		t.Fatalf("ReadArchive base: %v", err)
+	}
+	baseDigest = baseReader.ManifestDigest()
+	if err := baseReader.Close(); err != nil {
+		t.Fatalf("Close base: %v", err)
+	}
+
+	created := time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC)
+	headManifest := backup.Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   backup.ArchiveKindIncremental,
+		Created:       created,
+		Hostname:      "new-mac",
+		Base: &backup.BaseArchiveRef{
+			FileName:       "base.tar.gz",
+			Created:        created.Add(-24 * time.Hour),
+			ManifestSHA256: baseDigest,
+		},
+		Tools: map[string]backup.ToolManifest{
+			"claude-code": {Included: []string{"memory"}, FileCount: 1},
+		},
+		Files: []backup.FileManifest{{
+			Path:     logicalPath,
+			ToolID:   "claude-code",
+			Size:     int64(len("# base memory")),
+			SHA256:   mustSHA256ForImportTest(t, basePayload),
+			Category: adapters.CategoryMemory,
+			Storage:  backup.FileStorageBase,
+		}},
+	}
+	data, err := json.Marshal(headManifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	headPath = filepath.Join(dir, "delta.tar.gz")
+	writeRawArchiveForImportTest(t, headPath, map[string]string{"manifest.json": string(data)})
+	return headPath, basePath, baseDigest
+}
+
+func mustSHA256ForImportTest(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum)
+}
+
+func writeRawArchiveForImportTest(t *testing.T, archivePath string, files map[string]string) {
+	t.Helper()
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeFileForImportTest(t *testing.T, path, content string) {

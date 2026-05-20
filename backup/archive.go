@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -214,6 +215,136 @@ type archiveFile struct {
 	Name   string
 	Size   int64
 	SHA256 string
+}
+
+// ArchiveSet reads a head archive together with optional base archives.
+type ArchiveSet struct {
+	Head  *ArchiveReader
+	Bases []*ArchiveReader
+}
+
+// OpenArchiveSet opens a head archive and any bases needed to read base-backed files.
+func OpenArchiveSet(headPath string, basePaths []string) (*ArchiveSet, error) {
+	head, err := ReadArchive(headPath)
+	if err != nil {
+		return nil, err
+	}
+	set := &ArchiveSet{Head: head}
+	for _, basePath := range basePaths {
+		base, err := ReadArchive(basePath)
+		if err != nil {
+			set.Close()
+			return nil, err
+		}
+		set.Bases = append(set.Bases, base)
+	}
+	if err := set.validateRequiredBase(); err != nil {
+		set.Close()
+		return nil, err
+	}
+	return set, nil
+}
+
+func (set *ArchiveSet) validateRequiredBase() error {
+	if set == nil || set.Head == nil || set.Head.Manifest == nil {
+		return fmt.Errorf("archive set missing head manifest")
+	}
+	if set.headUsesBaseStorage() && set.Head.Manifest.Base == nil {
+		return fmt.Errorf("incremental archive contains base-backed files but has no base fingerprint")
+	}
+	if set.Head.Manifest.Base == nil {
+		return nil
+	}
+	want := set.Head.Manifest.Base.ManifestSHA256
+	for _, base := range set.Bases {
+		if base.ManifestDigest() == want {
+			return nil
+		}
+	}
+	return fmt.Errorf("required base archive missing: expected manifest sha256 %s", want)
+}
+
+func (set *ArchiveSet) headUsesBaseStorage() bool {
+	for _, file := range set.Head.Manifest.Files {
+		if file.Storage == FileStorageBase {
+			return true
+		}
+	}
+	return false
+}
+
+// Close releases resources for all archives in the set.
+func (set *ArchiveSet) Close() error {
+	if set == nil {
+		return nil
+	}
+	var errs []error
+	if set.Head != nil {
+		errs = append(errs, set.Head.Close())
+	}
+	for _, base := range set.Bases {
+		if base != nil {
+			errs = append(errs, base.Close())
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// Manifest returns the logical manifest for the head archive.
+func (set *ArchiveSet) Manifest() *Manifest {
+	return set.Head.Manifest
+}
+
+// ListFiles returns the logical files from the head archive.
+func (set *ArchiveSet) ListFiles() []string {
+	return set.Head.ListFiles()
+}
+
+// ReadFile returns a logical file from the head archive or matching base archive.
+func (set *ArchiveSet) ReadFile(name string) ([]byte, error) {
+	if err := validateArchivePath(name); err != nil {
+		return nil, err
+	}
+	file, ok := set.Head.logicalByPath[name]
+	if !ok || file.Storage == FileStorageInline {
+		return set.Head.ReadFile(name)
+	}
+	if file.Storage != FileStorageBase {
+		return nil, fmt.Errorf("unsupported file storage for %s: %s", name, file.Storage)
+	}
+	for _, base := range set.Bases {
+		if !baseContainsLogicalPath(base, name) {
+			continue
+		}
+		data, err := base.ReadFile(name)
+		if err == nil {
+			return data, nil
+		}
+		if !strings.Contains(err.Error(), "file stored in base archive") {
+			return nil, err
+		}
+	}
+	expected := ""
+	if set.Head.Manifest != nil && set.Head.Manifest.Base != nil {
+		expected = set.Head.Manifest.Base.ManifestSHA256
+	}
+	return nil, fmt.Errorf("base-backed file %s not found in provided base archives; expected base manifest sha256 %s", name, expected)
+}
+
+func baseContainsLogicalPath(base *ArchiveReader, name string) bool {
+	if base == nil {
+		return false
+	}
+	if len(base.logicalByPath) > 0 {
+		_, ok := base.logicalByPath[name]
+		return ok
+	}
+	for _, file := range base.ListFiles() {
+		if file == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ReadArchive opens and indexes an archive.
@@ -482,6 +613,33 @@ func ExtractArchive(archivePath, destDir string) error {
 	}
 	defer ar.Close()
 	return ar.extractManifestFiles(destDir)
+}
+
+// ExtractArchiveSet materializes the head archive's logical files, reading base-backed payloads from bases.
+func ExtractArchiveSet(headPath string, basePaths []string, destDir string) error {
+	set, err := OpenArchiveSet(headPath, basePaths)
+	if err != nil {
+		return err
+	}
+	defer set.Close()
+
+	for _, name := range set.ListFiles() {
+		target, err := safeExtractTarget(destDir, name)
+		if err != nil {
+			return err
+		}
+		data, err := set.ReadFile(name)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (ar *ArchiveReader) extractManifestFiles(destDir string) error {
