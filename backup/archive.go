@@ -154,6 +154,7 @@ func (ar *ArchiveReader) index() error {
 			if err := json.Unmarshal(data, &m); err != nil {
 				return err
 			}
+			m.Normalize()
 			ar.Manifest = &m
 		} else if _, err := io.Copy(io.Discard, tr); err != nil {
 			return err
@@ -242,6 +243,9 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 	}
 
 	for path, want := range expected {
+		if want.Storage == FileStorageBase {
+			continue
+		}
 		got, ok := actual[path]
 		if !ok {
 			return fmt.Errorf("manifest file missing from archive: %s", path)

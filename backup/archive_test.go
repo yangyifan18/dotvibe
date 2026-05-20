@@ -3,10 +3,14 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yangyifan18/dotvibe/adapters"
 )
@@ -272,5 +276,74 @@ func TestReadArchiveRejectsChecksumMismatch(t *testing.T) {
 	_, err := ReadArchive(archivePath)
 	if err == nil {
 		t.Fatal("expected checksum mismatch to fail")
+	}
+}
+
+func TestReadArchiveNormalizesLegacyEmbeddedManifest(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":    fmt.Sprintf(`{"version":"1.0.0","tools":{},"files":[{"path":"tool/config.json","size":2,"sha256":"%x","category":"config"}]}`, sum),
+		"tool/config.json": content,
+	})
+
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	if ra.Manifest.FormatVersion != 1 || ra.Manifest.ArchiveKind != ArchiveKindFull {
+		t.Fatalf("legacy defaults = (%d,%q), want (1,%q)", ra.Manifest.FormatVersion, ra.Manifest.ArchiveKind, ArchiveKindFull)
+	}
+	got := ra.Manifest.Files[0]
+	if got.ToolID != "tool" || got.Storage != FileStorageInline || got.StoredPath != got.Path {
+		t.Fatalf("legacy file metadata = %#v", got)
+	}
+}
+
+func TestReadArchiveAllowsBaseStoredManifestFileWithoutPayload(t *testing.T) {
+	created := time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC)
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Created:       created,
+		Hostname:      "new-mac",
+		Base: &BaseArchiveRef{
+			FileName:       "dotvibe-2026-05-19.tar.gz",
+			Created:        created.Add(-24 * time.Hour),
+			ManifestSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		Tools: map[string]ToolManifest{
+			"tool": {Included: []string{"config"}, FileCount: 1},
+		},
+		Files: []FileManifest{
+			{
+				Path:     "tool/config.json",
+				ToolID:   "tool",
+				Size:     2,
+				SHA256:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Category: "config",
+				Storage:  FileStorageBase,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json": string(data),
+	})
+
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	if ra.Manifest.Files[0].Storage != FileStorageBase {
+		t.Fatalf("file storage = %q, want %q", ra.Manifest.Files[0].Storage, FileStorageBase)
 	}
 }
