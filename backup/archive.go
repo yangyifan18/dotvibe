@@ -17,22 +17,11 @@ import (
 
 // CreateArchive writes a tar.gz file containing manifest and all entries.
 func CreateArchive(dst string, manifest *Manifest, entries []adapters.FileEntry) error {
-	files, err := buildFileManifest(entries)
+	plan, err := BuildFullArchivePlan(manifest, entries)
 	if err != nil {
 		return err
 	}
-	manifest.Files = files
-	manifest.Normalize()
-
-	return createArchiveFile(dst, manifest, func(tw *tar.Writer) error {
-		// Write all file entries
-		for _, entry := range entries {
-			if err := writeFileToTar(tw, entry.SourcePath, entry.InArchive); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	return CreateArchiveWithStoredEntries(dst, plan.Manifest, plan.StoredEntries)
 }
 
 // StoredEntry maps a source file to its physical storage path inside an archive.

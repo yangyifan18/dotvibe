@@ -71,9 +71,9 @@ func TestCreateArchive(t *testing.T) {
 
 	expected := []string{
 		"manifest.json",
-		"test-tool/config/settings.json",
-		"test-tool/memory/project/MEMORY.md",
-		"test-tool/skills/custom/skill.md",
+		objectPathForSHA256(mustFileSHA256ForTest(t, src+"/config/settings.json")),
+		objectPathForSHA256(mustFileSHA256ForTest(t, src+"/memory/project/MEMORY.md")),
+		objectPathForSHA256(mustFileSHA256ForTest(t, src+"/skills/custom/skill.md")),
 	}
 	for _, name := range expected {
 		if !files[name] {
