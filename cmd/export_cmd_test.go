@@ -86,6 +86,30 @@ func TestExportBaseFlagRequiresReadableArchive(t *testing.T) {
 	}
 }
 
+func TestExportBaseFlagRejectsOutputOverwriteOfBaseArchive(t *testing.T) {
+	oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase := exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase
+	defer func() {
+		exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase = oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase
+	}()
+	baseArchive := createDiffArchive(t, map[string]string{"tool/config/base.txt": "same"})
+
+	exportOutput = baseArchive
+	exportForce = true
+	exportOnly = "missing-tool"
+	exportWithHist = false
+	exportExcludes = nil
+	exportBase = baseArchive
+
+	if err := exportCmd.RunE(exportCmd, nil); err == nil {
+		t.Fatal("expected export to reject using the base archive as output")
+	}
+	baseReader, err := backup.ReadArchive(baseArchive)
+	if err != nil {
+		t.Fatalf("base archive should remain readable: %v", err)
+	}
+	defer baseReader.Close()
+}
+
 func TestCreateArchiveFromExportPlanWritesIncrementalMetadata(t *testing.T) {
 	src := t.TempDir()
 	baseFile := filepath.Join(src, "base.txt")

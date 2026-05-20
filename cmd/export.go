@@ -49,6 +49,13 @@ var exportCmd = &cobra.Command{
 		var baseManifest *backup.Manifest
 		var baseRef backup.BaseArchiveRef
 		if exportBase != "" {
+			sameArchive, err := sameArchivePath(exportBase, output)
+			if err != nil {
+				return err
+			}
+			if sameArchive {
+				return fmt.Errorf("output archive must be different from base archive: %s", output)
+			}
 			baseArchive, err := backup.ReadArchive(exportBase)
 			if err != nil {
 				return fmt.Errorf("failed to read base archive: %w", err)
@@ -152,6 +159,27 @@ var exportCmd = &cobra.Command{
 func isExportableFile(path string) bool {
 	info, err := os.Lstat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+func sameArchivePath(basePath, outputPath string) (bool, error) {
+	baseAbs, err := filepath.Abs(basePath)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve base archive path: %w", err)
+	}
+	outputAbs, err := filepath.Abs(outputPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve output archive path: %w", err)
+	}
+	if baseAbs == outputAbs {
+		return true, nil
+	}
+
+	baseInfo, baseErr := os.Stat(baseAbs)
+	outputInfo, outputErr := os.Stat(outputAbs)
+	if baseErr == nil && outputErr == nil && os.SameFile(baseInfo, outputInfo) {
+		return true, nil
+	}
+	return false, nil
 }
 
 func init() {
