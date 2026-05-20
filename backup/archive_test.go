@@ -204,6 +204,18 @@ func TestReadArchiveRejectsUnsafeNames(t *testing.T) {
 	}
 }
 
+func TestReadArchiveRejectsEmbeddedPathTraversal(t *testing.T) {
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json": `{"version":"1.0.0","tools":{}}`,
+		"claude-code/config/../../.ssh/authorized_keys": "owned",
+	})
+
+	_, err := ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected embedded path traversal to be rejected")
+	}
+}
+
 func TestReadArchiveRequiresManifest(t *testing.T) {
 	archivePath := createRawArchive(t, map[string]string{
 		"tool/config.json": "{}",
@@ -352,6 +364,106 @@ func TestReadArchiveUsesStoredPathForInlineManifestFile(t *testing.T) {
 	if string(got) != content {
 		t.Fatalf("ReadFile logical content = %q, want %q", string(got), content)
 	}
+}
+
+func TestReadArchiveRejectsExtraPayloadWhenManifestListsFiles(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 1}},
+		Files: []FileManifest{
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    FileStorageInline,
+				StoredPath: "objects/sha256/payload",
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":            string(data),
+		"objects/sha256/payload":   content,
+		"objects/sha256/unchecked": "extra",
+	})
+
+	_, err = ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected extra unchecked payload to fail")
+	}
+}
+
+func TestReadArchiveListFilesUsesLogicalManifestPaths(t *testing.T) {
+	archivePath := createStoredPathArchive(t, "{}")
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	files := ra.ListFiles()
+	if len(files) != 1 || files[0] != "tool/config.json" {
+		t.Fatalf("ListFiles = %#v, want logical path", files)
+	}
+}
+
+func TestExtractArchiveMaterializesStoredPathAsLogicalPath(t *testing.T) {
+	content := "{}"
+	archivePath := createStoredPathArchive(t, content)
+	dest := t.TempDir()
+
+	if err := ExtractArchive(archivePath, dest); err != nil {
+		t.Fatalf("ExtractArchive: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dest, "tool/config.json"))
+	if err != nil {
+		t.Fatalf("read logical extracted file: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("extracted logical content = %q, want %q", string(got), content)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "objects/sha256/payload")); !os.IsNotExist(err) {
+		t.Fatalf("stored payload path should not be materialized directly: %v", err)
+	}
+}
+
+func createStoredPathArchive(t *testing.T, content string) string {
+	t.Helper()
+	sum := sha256.Sum256([]byte(content))
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 1}},
+		Files: []FileManifest{
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    FileStorageInline,
+				StoredPath: "objects/sha256/payload",
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	return createRawArchive(t, map[string]string{
+		"manifest.json":          string(data),
+		"objects/sha256/payload": content,
+	})
 }
 
 func TestCreateArchiveRejectsUnsafeArchivePath(t *testing.T) {

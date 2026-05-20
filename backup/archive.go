@@ -184,6 +184,14 @@ func (ar *ArchiveReader) index() error {
 
 // ListFiles returns the paths of all files in the archive (excluding manifest).
 func (ar *ArchiveReader) ListFiles() []string {
+	if ar.Manifest != nil && len(ar.Manifest.Files) > 0 {
+		names := make([]string, 0, len(ar.Manifest.Files))
+		for _, file := range ar.Manifest.Files {
+			names = append(names, file.Path)
+		}
+		return names
+	}
+
 	var names []string
 	for _, f := range ar.files {
 		if f.Name != "manifest.json" {
@@ -264,13 +272,27 @@ func (ar *ArchiveReader) Close() error {
 
 func (ar *ArchiveReader) verifyManifestFiles() error {
 	expected := map[string]FileManifest{}
+	allowedPayloads := map[string]struct{}{}
 	for _, file := range ar.Manifest.Files {
+		if err := validateArchivePath(file.Path); err != nil {
+			return err
+		}
 		expected[file.Path] = file
+		if file.Storage != FileStorageBase {
+			physicalPath := storedPathForInlineFile(file)
+			if err := validateArchivePath(physicalPath); err != nil {
+				return err
+			}
+			allowedPayloads[physicalPath] = struct{}{}
+		}
 	}
 
 	actual := map[string]archiveFile{}
 	for _, file := range ar.files {
 		if file.Name != "manifest.json" {
+			if _, ok := allowedPayloads[file.Name]; !ok {
+				return fmt.Errorf("archive contains payload not listed in manifest: %s", file.Name)
+			}
 			actual[file.Name] = file
 		}
 	}
@@ -319,6 +341,44 @@ func (ar *ArchiveReader) fileSHA256(name string) (string, error) {
 
 // ExtractArchive extracts all files from a tar.gz to a directory.
 func ExtractArchive(archivePath, destDir string) error {
+	ar, err := ReadArchive(archivePath)
+	if err != nil {
+		return err
+	}
+	if len(ar.Manifest.Files) > 0 {
+		defer ar.Close()
+		return ar.extractManifestFiles(destDir)
+	}
+	if err := ar.Close(); err != nil {
+		return err
+	}
+	return extractRawArchive(archivePath, destDir)
+}
+
+func (ar *ArchiveReader) extractManifestFiles(destDir string) error {
+	for _, file := range ar.Manifest.Files {
+		if file.Storage == FileStorageBase {
+			continue
+		}
+		target, err := safeExtractTarget(destDir, file.Path)
+		if err != nil {
+			return err
+		}
+		data, err := ar.ReadFile(file.Path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func extractRawArchive(archivePath, destDir string) error {
 	f, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -385,6 +445,11 @@ func validateArchivePath(name string) error {
 	}
 	if strings.Contains(name, "\\") {
 		return fmt.Errorf("archive entry uses backslash path: %s", name)
+	}
+	for _, part := range strings.Split(name, "/") {
+		if part == "" || part == "." || part == ".." {
+			return fmt.Errorf("archive entry has unsafe path component: %s", name)
+		}
 	}
 	clean := filepath.Clean(name)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
