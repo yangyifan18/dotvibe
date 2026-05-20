@@ -3,10 +3,17 @@ package bootstrap
 import "os/exec"
 
 // InstallCommand describes a command a user can run to install a missing tool.
+// Command is display-only copy/paste text; use Executable and Args for direct execution.
+// SafeRun means the command is suitable for non-shell execution after user confirmation.
 type InstallCommand struct {
-	Manager string
-	Command string
-	SafeRun bool
+	Manager           string
+	Command           string
+	SafeRun           bool
+	Executable        string
+	Args              []string
+	ManualOnly        bool
+	UsesShell         bool
+	WritesGlobalState bool
 }
 
 // ToolSpec describes a bootstrap tool and the binaries that indicate it exists.
@@ -34,7 +41,14 @@ func DefaultToolSpecs() []ToolSpec {
 			Name:     "Claude Code",
 			Binaries: []string{"claude"},
 			InstallCommands: []InstallCommand{
-				{Manager: "npm", Command: "npm install -g @anthropic-ai/claude-code", SafeRun: true},
+				{
+					Manager:           "npm",
+					Command:           "npm install -g @anthropic-ai/claude-code",
+					SafeRun:           true,
+					Executable:        "npm",
+					Args:              []string{"install", "-g", "@anthropic-ai/claude-code"},
+					WritesGlobalState: true,
+				},
 			},
 		},
 		{
@@ -42,7 +56,14 @@ func DefaultToolSpecs() []ToolSpec {
 			Name:     "Codex CLI",
 			Binaries: []string{"codex"},
 			InstallCommands: []InstallCommand{
-				{Manager: "npm", Command: "npm i -g @openai/codex", SafeRun: true},
+				{
+					Manager:           "npm",
+					Command:           "npm i -g @openai/codex",
+					SafeRun:           true,
+					Executable:        "npm",
+					Args:              []string{"i", "-g", "@openai/codex"},
+					WritesGlobalState: true,
+				},
 			},
 		},
 		{
@@ -50,9 +71,29 @@ func DefaultToolSpecs() []ToolSpec {
 			Name:     "OpenCode",
 			Binaries: []string{"opencode"},
 			InstallCommands: []InstallCommand{
-				{Manager: "brew", Command: "brew install anomalyco/tap/opencode", SafeRun: true},
-				{Manager: "npm", Command: "npm i -g opencode-ai", SafeRun: true},
-				{Manager: "curl", Command: "curl -fsSL https://opencode.ai/install | bash", SafeRun: false},
+				{
+					Manager:           "brew",
+					Command:           "brew install anomalyco/tap/opencode",
+					SafeRun:           true,
+					Executable:        "brew",
+					Args:              []string{"install", "anomalyco/tap/opencode"},
+					WritesGlobalState: true,
+				},
+				{
+					Manager:           "npm",
+					Command:           "npm i -g opencode-ai",
+					SafeRun:           true,
+					Executable:        "npm",
+					Args:              []string{"i", "-g", "opencode-ai"},
+					WritesGlobalState: true,
+				},
+				{
+					Manager:    "curl",
+					Command:    "curl -fsSL https://opencode.ai/install | bash",
+					SafeRun:    false,
+					ManualOnly: true,
+					UsesShell:  true,
+				},
 			},
 		},
 	}
