@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/young/dotvibe/adapters"
-	"github.com/young/dotvibe/backup"
-	"github.com/young/dotvibe/config"
+	"github.com/yangyifan18/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/backup"
+	"github.com/yangyifan18/dotvibe/config"
 )
 
 var (

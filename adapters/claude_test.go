@@ -58,3 +58,50 @@ func TestClaudeAdapter_Status(t *testing.T) {
 		t.Error("Path is empty")
 	}
 }
+
+func TestClaudeAdapter_RestoreLegacyClaudeMarkdownToProjectRoot(t *testing.T) {
+	home := t.TempDir()
+	archiveDir := t.TempDir()
+	archivePath := filepath.Join(archiveDir, "claude-code", "memory", "-Users-young-App", "CLAUDE.md")
+	writeTestFile(t, archivePath, "# rules")
+
+	a := &ClaudeAdapter{home: home}
+	err := a.RestoreFiles([]FileEntry{{InArchive: "claude-code/memory/-Users-young-App/CLAUDE.md"}}, archiveDir, RestoreOpts{})
+	if err != nil {
+		t.Fatalf("RestoreFiles: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(home, ".claude", "projects", "-Users-young-App", "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("expected CLAUDE.md at project root: %v", err)
+	}
+	if string(got) != "# rules" {
+		t.Fatalf("restored content = %q", got)
+	}
+}
+
+func TestClaudeAdapter_ProjectFilterKeepsOnlyRequestedProject(t *testing.T) {
+	entries := []FileEntry{
+		{InArchive: "claude-code/projects/-Users-young-App/memory/MEMORY.md"},
+		{InArchive: "claude-code/projects/-Users-young-Other/memory/MEMORY.md"},
+		{InArchive: "claude-code/config/settings.json"},
+	}
+
+	filtered := FilterProjectEntries(entries, "/Users/young/App")
+	if len(filtered) != 1 {
+		t.Fatalf("filtered count = %d, want 1", len(filtered))
+	}
+	if filtered[0].InArchive != "claude-code/projects/-Users-young-App/memory/MEMORY.md" {
+		t.Fatalf("filtered path = %q", filtered[0].InArchive)
+	}
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/young/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/adapters"
 )
 
 var statusCmd = &cobra.Command{

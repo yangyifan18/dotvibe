@@ -5,8 +5,8 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/young/dotvibe/adapters"
-	"github.com/young/dotvibe/backup"
+	"github.com/yangyifan18/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/backup"
 )
 
 var (
@@ -14,6 +14,7 @@ var (
 	importOnly    string
 	importProject string
 	importForce   bool
+	importDryRun  bool
 )
 
 var importCmd = &cobra.Command{
@@ -55,12 +56,25 @@ var importCmd = &cobra.Command{
 			}
 			toolFiles = filtered
 		}
+		if importProject != "" {
+			toolFiles = filterImportEntriesByProject(toolFiles, importProject)
+		}
+		if countImportEntries(toolFiles) == 0 {
+			return fmt.Errorf("no files match the selected import filters")
+		}
 
 		// Show what will be restored
 		fmt.Println("Backup contents:")
 		for toolID, entries := range toolFiles {
 			tm := m.Tools[toolID]
 			fmt.Printf("  %s: %s (%d files)\n", toolID, tm.Included, len(entries))
+		}
+		if importProject != "" {
+			fmt.Printf("Project filter: %s\n", adapters.ClaudeProjectKey(importProject))
+		}
+		if importDryRun {
+			fmt.Println("Dry run: no files restored.")
+			return nil
 		}
 
 		if !importYes {
@@ -113,5 +127,27 @@ func init() {
 	importCmd.Flags().StringVar(&importOnly, "only", "", "only restore specified tools")
 	importCmd.Flags().StringVar(&importProject, "project", "", "restore specific project only")
 	importCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files")
+	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview restore without writing files")
 	rootCmd.AddCommand(importCmd)
+}
+
+func filterImportEntriesByProject(toolFiles map[string][]adapters.FileEntry, project string) map[string][]adapters.FileEntry {
+	filtered := map[string][]adapters.FileEntry{}
+	for toolID, entries := range toolFiles {
+		if toolID == "claude-code" {
+			entries = adapters.FilterProjectEntries(entries, project)
+		}
+		if len(entries) > 0 {
+			filtered[toolID] = entries
+		}
+	}
+	return filtered
+}
+
+func countImportEntries(toolFiles map[string][]adapters.FileEntry) int {
+	total := 0
+	for _, entries := range toolFiles {
+		total += len(entries)
+	}
+	return total
 }

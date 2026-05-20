@@ -60,14 +60,15 @@ func (a *ClaudeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 			if !proj.IsDir() {
 				continue
 			}
+			projectPrefix := "claude-code/projects/" + proj.Name()
 			memDir := filepath.Join(projectsDir, proj.Name(), "memory")
-			entries = append(entries, a.walkDir(memDir, "claude-code/memory/"+proj.Name(), CategoryMemory)...)
+			entries = append(entries, a.walkDir(memDir, projectPrefix+"/memory", CategoryMemory)...)
 
 			claudeMd := filepath.Join(projectsDir, proj.Name(), "CLAUDE.md")
 			if info, err := os.Stat(claudeMd); err == nil {
 				entries = append(entries, FileEntry{
 					SourcePath: claudeMd,
-					InArchive:  "claude-code/memory/" + proj.Name() + "/CLAUDE.md",
+					InArchive:  projectPrefix + "/CLAUDE.md",
 					Category:   CategoryMemory,
 					Size:       info.Size(),
 				})
@@ -169,6 +170,7 @@ func (a *ClaudeAdapter) Status() ToolStatus {
 }
 
 func (a *ClaudeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) error {
+	entries = FilterProjectEntries(entries, opts.Project)
 	for _, entry := range entries {
 		destPath := a.adaptPath(entry.InArchive)
 
@@ -202,10 +204,19 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) string {
 	switch parts[0] {
 	case "config":
 		return filepath.Join(a.baseDir(), parts[1])
+	case "projects":
+		subparts := strings.SplitN(parts[1], "/", 2)
+		if len(subparts) < 2 {
+			return filepath.Join(a.baseDir(), "projects", subparts[0])
+		}
+		return filepath.Join(a.baseDir(), "projects", subparts[0], subparts[1])
 	case "memory":
 		subparts := strings.SplitN(parts[1], "/", 2)
 		if len(subparts) < 2 {
 			return filepath.Join(a.baseDir(), "projects", subparts[0])
+		}
+		if subparts[1] == "CLAUDE.md" {
+			return filepath.Join(a.baseDir(), "projects", subparts[0], "CLAUDE.md")
 		}
 		return filepath.Join(a.baseDir(), "projects", subparts[0], "memory", subparts[1])
 	case "skills":
@@ -217,4 +228,57 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) string {
 	default:
 		return filepath.Join(a.baseDir(), rel)
 	}
+}
+
+func FilterProjectEntries(entries []FileEntry, project string) []FileEntry {
+	if project == "" {
+		return entries
+	}
+	key := ClaudeProjectKey(project)
+	var filtered []FileEntry
+	for _, entry := range entries {
+		projectKey, ok := claudeArchiveProject(entry.InArchive)
+		if ok && projectKey == key {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
+}
+
+func ClaudeProjectKey(project string) string {
+	project = strings.TrimSpace(project)
+	if project == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			project = home
+		}
+	} else if strings.HasPrefix(project, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			project = filepath.Join(home, strings.TrimPrefix(project, "~/"))
+		}
+	}
+	project = strings.Trim(project, string(os.PathSeparator))
+	if strings.HasPrefix(project, "-") {
+		return project
+	}
+	if project == "" {
+		return project
+	}
+	parts := strings.FieldsFunc(project, func(r rune) bool {
+		return r == '/' || r == '\\'
+	})
+	return "-" + strings.Join(parts, "-")
+}
+
+func claudeArchiveProject(archivePath string) (string, bool) {
+	if strings.HasPrefix(archivePath, "claude-code/projects/") {
+		rel := strings.TrimPrefix(archivePath, "claude-code/projects/")
+		parts := strings.SplitN(rel, "/", 2)
+		return parts[0], len(parts) == 2
+	}
+	if strings.HasPrefix(archivePath, "claude-code/memory/") {
+		rel := strings.TrimPrefix(archivePath, "claude-code/memory/")
+		parts := strings.SplitN(rel, "/", 2)
+		return parts[0], len(parts) == 2
+	}
+	return "", false
 }

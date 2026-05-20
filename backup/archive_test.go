@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/young/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/adapters"
 )
 
 func TestCreateArchive(t *testing.T) {
@@ -170,4 +170,72 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestExtractArchiveRejectsPathTraversal(t *testing.T) {
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json": `{"version":"1.0.0","tools":{}}`,
+		"../evil.txt":   "owned",
+	})
+	dest := t.TempDir()
+
+	err := ExtractArchive(archivePath, dest)
+	if err == nil {
+		t.Fatal("expected path traversal archive to be rejected")
+	}
+	if _, statErr := os.Stat(filepath.Join(dest, "..", "evil.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("path traversal wrote outside destination: %v", statErr)
+	}
+}
+
+func TestReadArchiveRejectsUnsafeNames(t *testing.T) {
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json": `{"version":"1.0.0","tools":{}}`,
+		"/tmp/evil":     "owned",
+	})
+
+	_, err := ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected unsafe absolute path to be rejected")
+	}
+}
+
+func TestReadArchiveRequiresManifest(t *testing.T) {
+	archivePath := createRawArchive(t, map[string]string{
+		"tool/config.json": "{}",
+	})
+
+	_, err := ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected archive without manifest to fail")
+	}
+}
+
+func createRawArchive(t *testing.T, files map[string]string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "raw.tar.gz")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	for name, content := range files {
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(content))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
