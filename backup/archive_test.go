@@ -217,6 +217,20 @@ func TestReadArchiveRequiresManifest(t *testing.T) {
 
 func createRawArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
+	entries := make([]rawArchiveEntry, 0, len(files))
+	for name, content := range files {
+		entries = append(entries, rawArchiveEntry{Name: name, Content: content})
+	}
+	return createRawArchiveEntries(t, entries)
+}
+
+type rawArchiveEntry struct {
+	Name    string
+	Content string
+}
+
+func createRawArchiveEntries(t *testing.T, entries []rawArchiveEntry) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "raw.tar.gz")
 	f, err := os.Create(path)
 	if err != nil {
@@ -224,11 +238,11 @@ func createRawArchive(t *testing.T, files map[string]string) string {
 	}
 	gw := gzip.NewWriter(f)
 	tw := tar.NewWriter(gw)
-	for name, content := range files {
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(content))}); err != nil {
+	for _, entry := range entries {
+		if err := tw.WriteHeader(&tar.Header{Name: entry.Name, Mode: 0644, Size: int64(len(entry.Content))}); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tw.Write([]byte(content)); err != nil {
+		if _, err := tw.Write([]byte(entry.Content)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -276,6 +290,81 @@ func TestReadArchiveRejectsChecksumMismatch(t *testing.T) {
 	_, err := ReadArchive(archivePath)
 	if err == nil {
 		t.Fatal("expected checksum mismatch to fail")
+	}
+}
+
+func TestReadArchiveRejectsDuplicateArchivePath(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	archivePath := createRawArchiveEntries(t, []rawArchiveEntry{
+		{Name: "manifest.json", Content: fmt.Sprintf(`{"version":"1.0.0","tools":{},"files":[{"path":"tool/config.json","size":2,"sha256":"%x","category":"config"}]}`, sum)},
+		{Name: "tool/config.json", Content: content},
+		{Name: "tool/config.json", Content: content},
+	})
+
+	_, err := ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected duplicate archive path to fail")
+	}
+}
+
+func TestReadArchiveUsesStoredPathForInlineManifestFile(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools: map[string]ToolManifest{
+			"tool": {Included: []string{"config"}, FileCount: 1},
+		},
+		Files: []FileManifest{
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    FileStorageInline,
+				StoredPath: "objects/sha256/payload",
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":          string(data),
+		"objects/sha256/payload": content,
+	})
+
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+
+	got, err := ra.ReadFile("tool/config.json")
+	if err != nil {
+		t.Fatalf("ReadFile logical path: %v", err)
+	}
+	if string(got) != content {
+		t.Fatalf("ReadFile logical content = %q, want %q", string(got), content)
+	}
+}
+
+func TestCreateArchiveRejectsUnsafeArchivePath(t *testing.T) {
+	src := t.TempDir()
+	filePath := filepath.Join(src, "evil.txt")
+	writeFile(t, filePath, "owned")
+	manifest := &Manifest{Version: "1.0.0", Tools: map[string]ToolManifest{}}
+
+	err := CreateArchive(filepath.Join(t.TempDir(), "backup.tar.gz"), manifest, []adapters.FileEntry{
+		{SourcePath: filePath, InArchive: "../evil.txt", Category: adapters.CategoryConfig},
+	})
+	if err == nil {
+		t.Fatal("expected unsafe archive path to fail")
 	}
 }
 

@@ -67,6 +67,10 @@ func writeBytesToTar(tw *tar.Writer, name string, data []byte) error {
 }
 
 func writeFileToTar(tw *tar.Writer, srcPath, archivePath string) error {
+	if err := validateArchivePath(archivePath); err != nil {
+		return err
+	}
+
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return err
@@ -132,6 +136,7 @@ func (ar *ArchiveReader) index() error {
 	defer gz.Close()
 
 	tr := tar.NewReader(gz)
+	seen := map[string]struct{}{}
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -144,6 +149,10 @@ func (ar *ArchiveReader) index() error {
 		if err := validateTarHeader(hdr); err != nil {
 			return err
 		}
+		if _, ok := seen[hdr.Name]; ok {
+			return fmt.Errorf("duplicate archive entry: %s", hdr.Name)
+		}
+		seen[hdr.Name] = struct{}{}
 
 		if hdr.Name == "manifest.json" {
 			data, err := io.ReadAll(tr)
@@ -189,6 +198,10 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 	if err := validateArchivePath(name); err != nil {
 		return nil, err
 	}
+	physicalName, err := ar.physicalPathForRead(name)
+	if err != nil {
+		return nil, err
+	}
 
 	f, err := os.Open(ar.path)
 	if err != nil {
@@ -214,7 +227,7 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 		if err := validateTarHeader(hdr); err != nil {
 			return nil, err
 		}
-		if hdr.Name == name {
+		if hdr.Name == physicalName {
 			return io.ReadAll(tr)
 		}
 		if _, err := io.Copy(io.Discard, tr); err != nil {
@@ -222,6 +235,26 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 		}
 	}
 	return nil, fmt.Errorf("file not found in archive: %s", name)
+}
+
+func (ar *ArchiveReader) physicalPathForRead(name string) (string, error) {
+	if ar.Manifest == nil {
+		return name, nil
+	}
+	for _, file := range ar.Manifest.Files {
+		if file.Path != name {
+			continue
+		}
+		if file.Storage == FileStorageBase {
+			return "", fmt.Errorf("file stored in base archive: %s", name)
+		}
+		physicalPath := storedPathForInlineFile(file)
+		if err := validateArchivePath(physicalPath); err != nil {
+			return "", err
+		}
+		return physicalPath, nil
+	}
+	return name, nil
 }
 
 // Close releases all resources.
@@ -246,7 +279,11 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		if want.Storage == FileStorageBase {
 			continue
 		}
-		got, ok := actual[path]
+		physicalPath := storedPathForInlineFile(want)
+		if err := validateArchivePath(physicalPath); err != nil {
+			return err
+		}
+		got, ok := actual[physicalPath]
 		if !ok {
 			return fmt.Errorf("manifest file missing from archive: %s", path)
 		}
@@ -262,6 +299,13 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		}
 	}
 	return nil
+}
+
+func storedPathForInlineFile(file FileManifest) string {
+	if file.StoredPath != "" {
+		return file.StoredPath
+	}
+	return file.Path
 }
 
 func (ar *ArchiveReader) fileSHA256(name string) (string, error) {
@@ -371,6 +415,9 @@ func safeExtractTarget(destDir, name string) (string, error) {
 func buildFileManifest(entries []adapters.FileEntry) ([]FileManifest, error) {
 	files := make([]FileManifest, 0, len(entries))
 	for _, entry := range entries {
+		if err := validateArchivePath(entry.InArchive); err != nil {
+			return nil, err
+		}
 		info, err := os.Stat(entry.SourcePath)
 		if err != nil {
 			return nil, err
