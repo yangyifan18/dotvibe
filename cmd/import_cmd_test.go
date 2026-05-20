@@ -9,7 +9,7 @@ import (
 	"github.com/yangyifan18/dotvibe/backup"
 )
 
-func TestFilterImportEntriesByProject(t *testing.T) {
+func TestFilterImportEntriesByProjectKeepsNonClaudeTools(t *testing.T) {
 	toolFiles := map[string][]adapters.FileEntry{
 		"claude-code": {
 			{InArchive: "claude-code/projects/-Users-young-App/memory/MEMORY.md"},
@@ -17,11 +17,12 @@ func TestFilterImportEntriesByProject(t *testing.T) {
 			{InArchive: "claude-code/config/settings.json"},
 		},
 		"codex-cli": {{InArchive: "codex-cli/config/config.toml"}},
+		"opencode":  {{InArchive: "opencode/xdg-config/opencode.json"}},
 	}
 
 	filtered := filterImportEntriesByProject(toolFiles, "-Users-young-App")
-	if len(filtered) != 1 {
-		t.Fatalf("filtered tools = %d, want 1", len(filtered))
+	if len(filtered) != 3 {
+		t.Fatalf("filtered tools = %d, want 3", len(filtered))
 	}
 	entries := filtered["claude-code"]
 	if len(entries) != 1 {
@@ -29,6 +30,9 @@ func TestFilterImportEntriesByProject(t *testing.T) {
 	}
 	if entries[0].InArchive != "claude-code/projects/-Users-young-App/memory/MEMORY.md" {
 		t.Fatalf("entry = %q", entries[0].InArchive)
+	}
+	if len(filtered["codex-cli"]) != 1 || len(filtered["opencode"]) != 1 {
+		t.Fatalf("non-Claude tools were not preserved: %#v", filtered)
 	}
 }
 

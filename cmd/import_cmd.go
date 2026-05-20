@@ -133,9 +133,13 @@ func init() {
 
 func filterImportEntriesByProject(toolFiles map[string][]adapters.FileEntry, project string) map[string][]adapters.FileEntry {
 	filtered := map[string][]adapters.FileEntry{}
-	entries := adapters.FilterProjectEntries(toolFiles["claude-code"], project)
-	if len(entries) > 0 {
-		filtered["claude-code"] = entries
+	for toolID, entries := range toolFiles {
+		if toolID == "claude-code" {
+			entries = adapters.FilterProjectEntries(entries, project)
+		}
+		if len(entries) > 0 {
+			filtered[toolID] = entries
+		}
 	}
 	return filtered
 }
