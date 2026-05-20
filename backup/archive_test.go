@@ -412,6 +412,41 @@ func TestReadArchiveUsesStoredPathForInlineManifestFile(t *testing.T) {
 	}
 }
 
+func TestReadArchiveRejectsUnsupportedFileStorage(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 1}},
+		Files: []FileManifest{
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    "remote",
+				StoredPath: "objects/sha256/payload",
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":          string(data),
+		"objects/sha256/payload": content,
+	})
+
+	_, err = ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected unsupported file storage to fail")
+	}
+}
+
 func TestReadArchiveRejectsExtraPayloadWhenManifestListsFiles(t *testing.T) {
 	content := "{}"
 	sum := sha256.Sum256([]byte(content))

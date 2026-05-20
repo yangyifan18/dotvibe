@@ -390,8 +390,12 @@ func (ar *ArchiveReader) storedPathForRead(name string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("file not listed in archive manifest: %s", name)
 	}
-	if file.Storage == FileStorageBase {
+	switch file.Storage {
+	case FileStorageInline:
+	case FileStorageBase:
 		return "", fmt.Errorf("file stored in base archive: %s", name)
+	default:
+		return "", fmt.Errorf("unsupported file storage for %s: %s", name, file.Storage)
 	}
 	physicalPath := storedPathForInlineFile(file)
 	if err := validateArchivePath(physicalPath); err != nil {
@@ -417,12 +421,16 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		}
 		expected[file.Path] = file
 		ar.logicalByPath[file.Path] = file
-		if file.Storage != FileStorageBase {
+		switch file.Storage {
+		case FileStorageInline:
 			physicalPath := storedPathForInlineFile(file)
 			if err := validateArchivePath(physicalPath); err != nil {
 				return err
 			}
 			allowedPayloads[physicalPath] = struct{}{}
+		case FileStorageBase:
+		default:
+			return fmt.Errorf("unsupported file storage for %s: %s", file.Path, file.Storage)
 		}
 	}
 
@@ -435,8 +443,12 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 	}
 
 	for path, want := range expected {
-		if want.Storage == FileStorageBase {
+		switch want.Storage {
+		case FileStorageInline:
+		case FileStorageBase:
 			continue
+		default:
+			return fmt.Errorf("unsupported file storage for %s: %s", path, want.Storage)
 		}
 		physicalPath := storedPathForInlineFile(want)
 		if err := validateArchivePath(physicalPath); err != nil {
