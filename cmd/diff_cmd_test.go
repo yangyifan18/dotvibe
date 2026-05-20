@@ -1,7 +1,9 @@
 package cmd
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"os"
@@ -61,6 +63,46 @@ func TestDiffArchivesFiltersByToolAndCategory(t *testing.T) {
 	assertStringSet(t, diff.Unchanged, []string{"claude-code/memory/same.md"})
 }
 
+func TestDiffArchivesFiltersLegacyFilesByInferredCategory(t *testing.T) {
+	left := createLegacyDiffArchiveNoFiles(t, map[string]string{
+		"claude-code/memory/same.md":       "same",
+		"claude-code/memory/changed.md":    "old",
+		"claude-code/memory/removed.md":    "removed",
+		"claude-code/config/settings.json": "old-config",
+	})
+	right := createLegacyDiffArchiveNoFiles(t, map[string]string{
+		"claude-code/memory/same.md":       "same",
+		"claude-code/memory/changed.md":    "new",
+		"claude-code/memory/added.md":      "added",
+		"claude-code/config/settings.json": "new-config",
+	})
+
+	diff, err := diffArchivesWithOptions(left, right, diffOptions{Category: adapters.CategoryMemory})
+	if err != nil {
+		t.Fatalf("diffArchivesWithOptions: %v", err)
+	}
+	assertStringSet(t, diff.Added, []string{"claude-code/memory/added.md"})
+	assertStringSet(t, diff.Removed, []string{"claude-code/memory/removed.md"})
+	assertStringSet(t, diff.Changed, []string{"claude-code/memory/changed.md"})
+	assertStringSet(t, diff.Unchanged, []string{"claude-code/memory/same.md"})
+}
+
+func TestDiffArchivesComparesLegacyFallbackFileChecksums(t *testing.T) {
+	left := createLegacyDiffArchiveNoFiles(t, map[string]string{
+		"tool/config/settings.json": "old",
+	})
+	right := createLegacyDiffArchiveNoFiles(t, map[string]string{
+		"tool/config/settings.json": "new",
+	})
+
+	diff, err := diffArchivesWithOptions(left, right, diffOptions{})
+	if err != nil {
+		t.Fatalf("diffArchivesWithOptions: %v", err)
+	}
+	assertStringSet(t, diff.Changed, []string{"tool/config/settings.json"})
+	assertStringSet(t, diff.Unchanged, []string{})
+}
+
 func TestDiffPrintArchiveDiffJSON(t *testing.T) {
 	diff := archiveDiff{
 		Added:     []string{"tool/added.txt"},
@@ -75,7 +117,12 @@ func TestDiffPrintArchiveDiffJSON(t *testing.T) {
 		}
 	})
 
-	var got archiveDiff
+	var got struct {
+		Added     []string `json:"added"`
+		Removed   []string `json:"removed"`
+		Changed   []string `json:"changed"`
+		Unchanged []string `json:"unchanged"`
+	}
 	if err := json.Unmarshal([]byte(output), &got); err != nil {
 		t.Fatalf("json output did not decode: %v\n%s", err, output)
 	}
@@ -83,10 +130,13 @@ func TestDiffPrintArchiveDiffJSON(t *testing.T) {
 	assertStringSet(t, got.Removed, []string{})
 	assertStringSet(t, got.Changed, diff.Changed)
 	assertStringSet(t, got.Unchanged, diff.Unchanged)
-	if !strings.Contains(output, "\"Added\"") || strings.Index(output, "\"Added\"") > strings.Index(output, "\"Removed\"") {
+	if strings.Contains(output, "\"Added\"") || strings.Contains(output, "\"Removed\"") {
+		t.Fatalf("json output should use lowercase field names: %s", output)
+	}
+	if !strings.Contains(output, "\"added\"") || strings.Index(output, "\"added\"") > strings.Index(output, "\"removed\"") {
 		t.Fatalf("json output is not stable archiveDiff field order: %s", output)
 	}
-	if strings.Contains(output, "\"Removed\": null") {
+	if strings.Contains(output, "\"removed\": null") {
 		t.Fatalf("json output should use arrays for empty diff lists: %s", output)
 	}
 }
@@ -120,6 +170,49 @@ func createDiffArchiveWithCategories(t *testing.T, files map[string]diffFixtureF
 		t.Fatalf("CreateArchive: %v", err)
 	}
 	return archivePath
+}
+
+func createLegacyDiffArchiveNoFiles(t *testing.T, files map[string]string) string {
+	t.Helper()
+	archivePath := filepath.Join(t.TempDir(), "legacy.tar.gz")
+	out, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatalf("Create legacy archive: %v", err)
+	}
+	gw := gzip.NewWriter(out)
+	tw := tar.NewWriter(gw)
+
+	manifestData, err := json.Marshal(&backup.Manifest{
+		Version: "1.0.0",
+		Tools:   map[string]backup.ToolManifest{"tool": {Included: []string{"config", "memory"}, FileCount: len(files)}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	writeTarBytesForDiffTest(t, tw, "manifest.json", manifestData)
+	for name, content := range files {
+		writeTarBytesForDiffTest(t, tw, name, []byte(content))
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("Close tar: %v", err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatalf("Close gzip: %v", err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatalf("Close archive: %v", err)
+	}
+	return archivePath
+}
+
+func writeTarBytesForDiffTest(t *testing.T, tw *tar.Writer, name string, data []byte) {
+	t.Helper()
+	if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(data))}); err != nil {
+		t.Fatalf("WriteHeader %s: %v", name, err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatalf("Write %s: %v", name, err)
+	}
 }
 
 func captureStdout(t *testing.T, fn func()) string {

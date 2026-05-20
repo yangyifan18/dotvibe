@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
 )
 
@@ -18,10 +20,10 @@ var (
 )
 
 type archiveDiff struct {
-	Added     []string
-	Removed   []string
-	Changed   []string
-	Unchanged []string
+	Added     []string `json:"added"`
+	Removed   []string `json:"removed"`
+	Changed   []string `json:"changed"`
+	Unchanged []string `json:"unchanged"`
 }
 
 type diffOptions struct {
@@ -71,8 +73,14 @@ func diffArchivesWithOptions(leftPath, rightPath string, opts diffOptions) (arch
 	}
 	defer right.Close()
 
-	leftFiles := manifestFileMap(left.Manifest, left.ListFiles())
-	rightFiles := manifestFileMap(right.Manifest, right.ListFiles())
+	leftFiles, err := manifestFileMapFromArchive(left)
+	if err != nil {
+		return archiveDiff{}, fmt.Errorf("read left archive metadata: %w", err)
+	}
+	rightFiles, err := manifestFileMapFromArchive(right)
+	if err != nil {
+		return archiveDiff{}, fmt.Errorf("read right archive metadata: %w", err)
+	}
 	leftFiles = filterManifestFileMap(leftFiles, opts)
 	rightFiles = filterManifestFileMap(rightFiles, opts)
 
@@ -115,15 +123,70 @@ func compareManifestFileMaps(leftFiles, rightFiles map[string]backup.FileManifes
 func manifestFileMap(manifest *backup.Manifest, fallback []string) map[string]backup.FileManifest {
 	files := map[string]backup.FileManifest{}
 	for _, file := range manifest.Files {
+		file = normalizeDiffFileManifest(file.Path, file)
 		files[file.Path] = file
 	}
 	if len(files) > 0 {
 		return files
 	}
 	for _, path := range fallback {
-		files[path] = backup.FileManifest{Path: path}
+		files[path] = normalizeDiffFileManifest(path, backup.FileManifest{Path: path})
 	}
 	return files
+}
+
+func manifestFileMapFromArchive(ar *backup.ArchiveReader) (map[string]backup.FileManifest, error) {
+	files := manifestFileMap(ar.Manifest, ar.ListFiles())
+	if ar.Manifest != nil && len(ar.Manifest.Files) > 0 {
+		return files, nil
+	}
+	for path, file := range files {
+		data, err := ar.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		sum := sha256.Sum256(data)
+		file.Size = int64(len(data))
+		file.SHA256 = fmt.Sprintf("%x", sum)
+		files[path] = file
+	}
+	return files, nil
+}
+
+func normalizeDiffFileManifest(path string, file backup.FileManifest) backup.FileManifest {
+	if file.Path == "" {
+		file.Path = path
+	}
+	if file.ToolID == "" {
+		file.ToolID = toolIDFromDiffArchivePath(path)
+	}
+	if file.Category == "" {
+		file.Category = inferDiffCategoryFromArchivePath(path)
+	}
+	return file
+}
+
+func toolIDFromDiffArchivePath(path string) string {
+	if idx := strings.IndexByte(path, '/'); idx > 0 {
+		return path[:idx]
+	}
+	return ""
+}
+
+func inferDiffCategoryFromArchivePath(path string) string {
+	for _, segment := range strings.Split(path, "/") {
+		switch segment {
+		case adapters.CategoryConfig:
+			return adapters.CategoryConfig
+		case adapters.CategoryMemory:
+			return adapters.CategoryMemory
+		case adapters.CategorySkills, "plugins":
+			return adapters.CategorySkills
+		case adapters.CategoryHistory, "sessions", "transcripts", "todos":
+			return adapters.CategoryHistory
+		}
+	}
+	return ""
 }
 
 func filterManifestFileMap(files map[string]backup.FileManifest, opts diffOptions) map[string]backup.FileManifest {
