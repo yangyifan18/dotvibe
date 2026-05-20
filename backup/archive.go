@@ -44,16 +44,8 @@ type StoredEntry struct {
 // CreateArchiveWithStoredEntries writes a tar.gz file using manifest logical paths
 // and independent physical storage paths for payloads.
 func CreateArchiveWithStoredEntries(dst string, manifest *Manifest, entries []StoredEntry) error {
-	manifest.Normalize()
-	seen := map[string]struct{}{}
-	for _, entry := range entries {
-		if err := validateArchivePath(entry.StoredPath); err != nil {
-			return err
-		}
-		if _, ok := seen[entry.StoredPath]; ok {
-			return fmt.Errorf("duplicate stored archive path: %s", entry.StoredPath)
-		}
-		seen[entry.StoredPath] = struct{}{}
+	if err := validateStoredArchiveInputs(manifest, entries); err != nil {
+		return err
 	}
 
 	return createArchiveFile(dst, manifest, func(tw *tar.Writer) error {
@@ -66,29 +58,113 @@ func CreateArchiveWithStoredEntries(dst string, manifest *Manifest, entries []St
 	})
 }
 
+func validateStoredArchiveInputs(manifest *Manifest, entries []StoredEntry) error {
+	if manifest == nil {
+		return fmt.Errorf("manifest is nil")
+	}
+	manifest.Normalize()
+
+	type storedSource struct {
+		size   int64
+		sha256 string
+	}
+	entryByPath := map[string]storedSource{}
+	for _, entry := range entries {
+		if err := validateArchivePath(entry.StoredPath); err != nil {
+			return err
+		}
+		if _, ok := entryByPath[entry.StoredPath]; ok {
+			return fmt.Errorf("duplicate stored archive path: %s", entry.StoredPath)
+		}
+		info, err := os.Stat(entry.SourcePath)
+		if err != nil {
+			return err
+		}
+		sum, err := sourceFileSHA256(entry.SourcePath)
+		if err != nil {
+			return err
+		}
+		entryByPath[entry.StoredPath] = storedSource{size: info.Size(), sha256: sum}
+	}
+
+	logicalPaths := map[string]struct{}{}
+	expectedStoredPaths := map[string]struct{}{}
+	for _, file := range manifest.Files {
+		if err := validateArchivePath(file.Path); err != nil {
+			return err
+		}
+		if _, ok := logicalPaths[file.Path]; ok {
+			return fmt.Errorf("duplicate logical manifest path: %s", file.Path)
+		}
+		logicalPaths[file.Path] = struct{}{}
+
+		switch file.Storage {
+		case FileStorageInline:
+			storedPath := storedPathForInlineFile(file)
+			if err := validateArchivePath(storedPath); err != nil {
+				return err
+			}
+			source, ok := entryByPath[storedPath]
+			if !ok {
+				return fmt.Errorf("manifest inline file missing stored payload: %s", file.Path)
+			}
+			if source.size != file.Size {
+				return fmt.Errorf("stored source size mismatch for %s: got %d, want %d", file.Path, source.size, file.Size)
+			}
+			if source.sha256 != file.SHA256 {
+				return fmt.Errorf("stored source checksum mismatch for %s", file.Path)
+			}
+			expectedStoredPaths[storedPath] = struct{}{}
+		case FileStorageBase:
+			// Base-backed files describe logical state but do not store payloads.
+		default:
+			return fmt.Errorf("unsupported file storage for %s: %s", file.Path, file.Storage)
+		}
+	}
+
+	for storedPath := range entryByPath {
+		if _, ok := expectedStoredPaths[storedPath]; !ok {
+			return fmt.Errorf("stored payload not listed in manifest: %s", storedPath)
+		}
+	}
+	return nil
+}
+
 func createArchiveFile(dst string, manifest *Manifest, writePayloads func(*tar.Writer) error) error {
 	f, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Close()
-
 	tw := tar.NewWriter(gw)
-	defer tw.Close()
 
 	// Write manifest first
 	manifestData, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
-		return err
+		return closeArchiveWriters(tw, gw, f, err)
 	}
 	if err := writeBytesToTar(tw, "manifest.json", manifestData); err != nil {
-		return err
+		return closeArchiveWriters(tw, gw, f, err)
+	}
+	if err := writePayloads(tw); err != nil {
+		return closeArchiveWriters(tw, gw, f, err)
 	}
 
-	return writePayloads(tw)
+	return closeArchiveWriters(tw, gw, f, nil)
+}
+
+func closeArchiveWriters(tw *tar.Writer, gw *gzip.Writer, f *os.File, firstErr error) error {
+	if err := tw.Close(); firstErr == nil && err != nil {
+		firstErr = err
+	}
+	if err := gw.Close(); firstErr == nil && err != nil {
+		firstErr = err
+	}
+	if err := f.Close(); firstErr == nil && err != nil {
+		firstErr = err
+	}
+	return firstErr
 }
 
 func writeBytesToTar(tw *tar.Writer, name string, data []byte) error {
@@ -145,8 +221,9 @@ type ArchiveReader struct {
 }
 
 type archiveFile struct {
-	Name string
-	Size int64
+	Name   string
+	Size   int64
+	SHA256 string
 }
 
 // ReadArchive opens and indexes an archive.
@@ -210,14 +287,18 @@ func (ar *ArchiveReader) index() error {
 			}
 			m.Normalize()
 			ar.Manifest = &m
-		} else if _, err := io.Copy(io.Discard, tr); err != nil {
-			return err
+		} else {
+			h := sha256.New()
+			if _, err := io.Copy(io.MultiWriter(io.Discard, h), tr); err != nil {
+				return err
+			}
+			file := archiveFile{Name: hdr.Name, Size: hdr.Size, SHA256: fmt.Sprintf("%x", h.Sum(nil))}
+			ar.files = append(ar.files, file)
+			ar.storedByPath[hdr.Name] = file
+			continue
 		}
 
 		ar.files = append(ar.files, archiveFile{Name: hdr.Name, Size: hdr.Size})
-		if hdr.Name != "manifest.json" {
-			ar.storedByPath[hdr.Name] = archiveFile{Name: hdr.Name, Size: hdr.Size}
-		}
 	}
 	if ar.Manifest == nil {
 		return fmt.Errorf("archive missing manifest.json")
@@ -368,11 +449,7 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		if got.Size != want.Size {
 			return fmt.Errorf("archive file size mismatch for %s: got %d, want %d", path, got.Size, want.Size)
 		}
-		sum, err := ar.storedFileSHA256(physicalPath)
-		if err != nil {
-			return err
-		}
-		if sum != want.SHA256 {
+		if got.SHA256 != want.SHA256 {
 			return fmt.Errorf("archive file checksum mismatch for %s", path)
 		}
 	}
@@ -384,15 +461,6 @@ func storedPathForInlineFile(file FileManifest) string {
 		return file.StoredPath
 	}
 	return file.Path
-}
-
-func (ar *ArchiveReader) storedFileSHA256(name string) (string, error) {
-	data, err := ar.readStoredFile(name)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(data)
-	return fmt.Sprintf("%x", sum), nil
 }
 
 // ExtractArchive extracts all files from a tar.gz to a directory.

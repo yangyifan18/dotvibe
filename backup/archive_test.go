@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -494,6 +495,120 @@ func TestReadArchiveListFilesSortsLogicalManifestPaths(t *testing.T) {
 	assertStringSetBackup(t, ra.ListFiles(), []string{"tool/a.txt", "tool/z.txt"})
 	if got := ra.ListFiles(); got[0] != "tool/a.txt" || got[1] != "tool/z.txt" {
 		t.Fatalf("ListFiles order = %#v, want sorted logical paths", got)
+	}
+}
+
+func TestCreateArchiveWithStoredEntriesRejectsInvalidManifestBeforeWriting(t *testing.T) {
+	src := t.TempDir()
+	payload := filepath.Join(src, "payload.txt")
+	writeFile(t, payload, "payload")
+	dst := filepath.Join(t.TempDir(), "stored.tar.gz")
+
+	tests := []struct {
+		name     string
+		manifest *Manifest
+		entries  []StoredEntry
+	}{
+		{
+			name: "duplicate logical paths",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "objects/payload"},
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "objects/payload2"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "unsupported storage value",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: "remote", StoredPath: "objects/payload"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "missing inline payload",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "objects/missing"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "unsafe manifest stored path",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "../payload"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "unsafe entry stored path",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "objects/payload"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "../payload"}},
+		},
+		{
+			name: "size mismatch",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 99, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageInline, StoredPath: "objects/payload"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "checksum mismatch",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: strings.Repeat("0", 64), Storage: FileStorageInline, StoredPath: "objects/payload"},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+		{
+			name: "extra stored entry",
+			manifest: &Manifest{
+				Version: "1.0.0",
+				Tools:   map[string]ToolManifest{},
+				Files: []FileManifest{
+					{Path: "tool/config.json", Size: 7, SHA256: mustFileSHA256ForTest(t, payload), Storage: FileStorageBase},
+				},
+			},
+			entries: []StoredEntry{{SourcePath: payload, StoredPath: "objects/payload"}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := CreateArchiveWithStoredEntries(dst, tt.manifest, tt.entries); err == nil {
+				t.Fatal("expected invalid manifest/entries to fail")
+			}
+			if _, err := os.Stat(dst); !os.IsNotExist(err) {
+				t.Fatalf("archive should not be created before validation succeeds: %v", err)
+			}
+		})
 	}
 }
 
