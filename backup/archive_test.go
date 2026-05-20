@@ -320,6 +320,51 @@ func TestReadArchiveRejectsDuplicateArchivePath(t *testing.T) {
 	}
 }
 
+func TestReadArchiveRejectsDuplicateLogicalManifestPath(t *testing.T) {
+	content := "{}"
+	sum := sha256.Sum256([]byte(content))
+	manifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 2}},
+		Files: []FileManifest{
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    FileStorageInline,
+				StoredPath: "objects/sha256/first",
+			},
+			{
+				Path:       "tool/config.json",
+				ToolID:     "tool",
+				Size:       int64(len(content)),
+				SHA256:     fmt.Sprintf("%x", sum),
+				Category:   "config",
+				Storage:    FileStorageInline,
+				StoredPath: "objects/sha256/second",
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":         string(data),
+		"objects/sha256/first":  content,
+		"objects/sha256/second": content,
+	})
+
+	_, err = ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected duplicate logical manifest path to fail")
+	}
+}
+
 func TestReadArchiveUsesStoredPathForInlineManifestFile(t *testing.T) {
 	content := "{}"
 	sum := sha256.Sum256([]byte(content))
@@ -477,6 +522,23 @@ func TestCreateArchiveRejectsUnsafeArchivePath(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected unsafe archive path to fail")
+	}
+}
+
+func TestCreateArchiveRejectsDuplicateArchivePath(t *testing.T) {
+	src := t.TempDir()
+	first := filepath.Join(src, "first.txt")
+	second := filepath.Join(src, "second.txt")
+	writeFile(t, first, "one")
+	writeFile(t, second, "two")
+	manifest := &Manifest{Version: "1.0.0", Tools: map[string]ToolManifest{}}
+
+	err := CreateArchive(filepath.Join(t.TempDir(), "backup.tar.gz"), manifest, []adapters.FileEntry{
+		{SourcePath: first, InArchive: "tool/config.json", Category: adapters.CategoryConfig},
+		{SourcePath: second, InArchive: "tool/config.json", Category: adapters.CategoryConfig},
+	})
+	if err == nil {
+		t.Fatal("expected duplicate archive path to fail")
 	}
 }
 

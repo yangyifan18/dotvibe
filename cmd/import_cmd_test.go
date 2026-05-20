@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"archive/tar"
+	"compress/gzip"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
@@ -53,6 +58,27 @@ func TestImportDryRunReturnsBeforeConfirmation(t *testing.T) {
 	}
 }
 
+func TestImportRejectsBaseBackedArchiveUntilBaseFlagExists(t *testing.T) {
+	archivePath := makeBaseBackedImportArchive(t)
+	oldDryRun, oldYes, oldOnly, oldProject, oldForce := importDryRun, importYes, importOnly, importProject, importForce
+	defer func() {
+		importDryRun, importYes, importOnly, importProject, importForce = oldDryRun, oldYes, oldOnly, oldProject, oldForce
+	}()
+	importDryRun = true
+	importYes = true
+	importOnly = ""
+	importProject = ""
+	importForce = false
+
+	err := importCmd.RunE(importCmd, []string{archivePath})
+	if err == nil {
+		t.Fatal("expected base-backed import to be rejected")
+	}
+	if !strings.Contains(err.Error(), "--base") {
+		t.Fatalf("error = %q, want mention --base", err.Error())
+	}
+}
+
 func makeImportTestArchive(t *testing.T) string {
 	t.Helper()
 	src := t.TempDir()
@@ -72,6 +98,64 @@ func makeImportTestArchive(t *testing.T) string {
 	}}
 	if err := backup.CreateArchive(archivePath, manifest, entries); err != nil {
 		t.Fatalf("CreateArchive: %v", err)
+	}
+	return archivePath
+}
+
+func makeBaseBackedImportArchive(t *testing.T) string {
+	t.Helper()
+	created := time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC)
+	manifest := backup.Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   backup.ArchiveKindIncremental,
+		Created:       created,
+		Hostname:      "new-mac",
+		Base: &backup.BaseArchiveRef{
+			FileName:       "base.tar.gz",
+			Created:        created.Add(-24 * time.Hour),
+			ManifestSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		Tools: map[string]backup.ToolManifest{
+			"claude-code": {Included: []string{"memory"}, FileCount: 1},
+		},
+		Files: []backup.FileManifest{
+			{
+				Path:     "claude-code/projects/-Users-young-App/memory/MEMORY.md",
+				ToolID:   "claude-code",
+				Size:     8,
+				SHA256:   "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Category: adapters.CategoryMemory,
+				Storage:  backup.FileStorageBase,
+			},
+		},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("Marshal manifest: %v", err)
+	}
+
+	archivePath := filepath.Join(t.TempDir(), "incremental.tar.gz")
+	f, err := os.Create(archivePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gw := gzip.NewWriter(f)
+	tw := tar.NewWriter(gw)
+	if err := tw.WriteHeader(&tar.Header{Name: "manifest.json", Mode: 0644, Size: int64(len(data))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
 	}
 	return archivePath
 }

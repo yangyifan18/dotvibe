@@ -30,6 +30,9 @@ var importCmd = &cobra.Command{
 		defer ar.Close()
 
 		m := ar.Manifest
+		if manifestRequiresBaseArchive(m) {
+			return fmt.Errorf("archive contains base-backed incremental files; --base is required but archive chain import is not implemented yet")
+		}
 		files := ar.ListFiles()
 
 		// Group files by tool
@@ -137,6 +140,18 @@ var importCmd = &cobra.Command{
 		}
 		return nil
 	},
+}
+
+func manifestRequiresBaseArchive(m *backup.Manifest) bool {
+	if m.ArchiveKind == backup.ArchiveKindIncremental || m.Base != nil {
+		return true
+	}
+	for _, file := range m.Files {
+		if file.Storage == backup.FileStorageBase {
+			return true
+		}
+	}
+	return false
 }
 
 func init() {

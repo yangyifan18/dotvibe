@@ -277,6 +277,9 @@ func (ar *ArchiveReader) verifyManifestFiles() error {
 		if err := validateArchivePath(file.Path); err != nil {
 			return err
 		}
+		if _, ok := expected[file.Path]; ok {
+			return fmt.Errorf("duplicate logical manifest path: %s", file.Path)
+		}
 		expected[file.Path] = file
 		if file.Storage != FileStorageBase {
 			physicalPath := storedPathForInlineFile(file)
@@ -479,10 +482,15 @@ func safeExtractTarget(destDir, name string) (string, error) {
 
 func buildFileManifest(entries []adapters.FileEntry) ([]FileManifest, error) {
 	files := make([]FileManifest, 0, len(entries))
+	seen := map[string]struct{}{}
 	for _, entry := range entries {
 		if err := validateArchivePath(entry.InArchive); err != nil {
 			return nil, err
 		}
+		if _, ok := seen[entry.InArchive]; ok {
+			return nil, fmt.Errorf("duplicate archive path: %s", entry.InArchive)
+		}
+		seen[entry.InArchive] = struct{}{}
 		info, err := os.Stat(entry.SourcePath)
 		if err != nil {
 			return nil, err
