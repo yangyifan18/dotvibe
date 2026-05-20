@@ -16,13 +16,13 @@ var rootCmd = &cobra.Command{
 	Long: `dotvibe backs up and restores data from AI coding tools
 (Claude Code, Codex CLI, OpenCode) for migration between machines.
 
-Usage:
+Common commands:
   dotvibe status              Show detected tools
   dotvibe export              Create a backup
   dotvibe list <archive>      Show backup contents
   dotvibe diff <a> <b>        Compare two backups
   dotvibe import <archive>    Restore from backup
-  dotvibe setup [archive]    Bootstrap tools and optionally restore`,
+  dotvibe setup [archive]     Bootstrap tools and optionally restore`,
 }
 
 func Execute() error {

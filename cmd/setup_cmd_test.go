@@ -2,9 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/bootstrap"
 )
 
@@ -82,4 +84,117 @@ func TestBuildInstallCommandPlanSkipsUnsafeByDefault(t *testing.T) {
 	if len(commands) != 1 || commands[0].Manager != "brew" {
 		t.Fatalf("expected safe structured brew command, got %#v", commands)
 	}
+}
+
+func TestSetupConfirmationEOFDeniesActions(t *testing.T) {
+	var out bytes.Buffer
+	ok := confirmSetupActions(strings.NewReader(""), &out, []bootstrap.InstallCommand{{
+		Manager: "npm",
+		Command: "npm i -g @openai/codex",
+	}}, "backup.tar.gz")
+	if ok {
+		t.Fatal("EOF confirmation should deny setup actions")
+	}
+	if !strings.Contains(out.String(), "Restore backup: backup.tar.gz") {
+		t.Fatalf("combined restore action missing from prompt: %s", out.String())
+	}
+}
+
+func TestSetupConfirmationReadErrorDeniesActions(t *testing.T) {
+	var out bytes.Buffer
+	ok := confirmSetupActions(errReader{}, &out, nil, "backup.tar.gz")
+	if ok {
+		t.Fatal("read error confirmation should deny setup actions")
+	}
+}
+
+func TestSetupInstallArchiveRequiresConfirmationBeforeRestoreWhenNoCommandsSelected(t *testing.T) {
+	restoreCalled := false
+	withSetupTestHooks(t, setupTestHooks{
+		detect: func() []bootstrap.ToolCheckResult {
+			return []bootstrap.ToolCheckResult{{ID: "codex-cli", Name: "Codex CLI", Installed: true, FoundBinary: "/bin/codex"}}
+		},
+		restore: func(string) error {
+			restoreCalled = true
+			return errors.New("restore should not run")
+		},
+	})
+	setupInstall = true
+	setupYes = false
+	setupOnly = ""
+	setupBases = nil
+
+	cmd, _ := setupTestCommand()
+	cmd.SetIn(strings.NewReader(""))
+	if err := runSetup(cmd, []string{"backup.tar.gz"}); err != nil {
+		t.Fatalf("setup should cancel without trying restore: %v", err)
+	}
+	if restoreCalled {
+		t.Fatal("restore ran without explicit confirmation")
+	}
+}
+
+func TestSetupYesSkipsConfirmation(t *testing.T) {
+	restoreCalled := false
+	withSetupTestHooks(t, setupTestHooks{
+		detect: func() []bootstrap.ToolCheckResult {
+			return []bootstrap.ToolCheckResult{{ID: "codex-cli", Name: "Codex CLI", Installed: true, FoundBinary: "/bin/codex"}}
+		},
+		restore: func(archive string) error {
+			restoreCalled = archive == "backup.tar.gz"
+			return nil
+		},
+	})
+	setupInstall = true
+	setupYes = true
+	setupOnly = ""
+	setupBases = nil
+
+	cmd, _ := setupTestCommand()
+	cmd.SetIn(strings.NewReader(""))
+	if err := runSetup(cmd, []string{"backup.tar.gz"}); err != nil {
+		t.Fatalf("setup --yes failed: %v", err)
+	}
+	if !restoreCalled {
+		t.Fatal("setup --yes should run restore without prompting")
+	}
+}
+
+type setupTestHooks struct {
+	detect  func() []bootstrap.ToolCheckResult
+	restore func(string) error
+}
+
+func withSetupTestHooks(t *testing.T, hooks setupTestHooks) {
+	t.Helper()
+	oldDetect, oldRestore := detectSetupTools, setupRestore
+	oldInstall, oldYes, oldOnly, oldBases := setupInstall, setupYes, setupOnly, setupBases
+	if hooks.detect != nil {
+		detectSetupTools = hooks.detect
+	}
+	if hooks.restore != nil {
+		setupRestore = hooks.restore
+	}
+	t.Cleanup(func() {
+		detectSetupTools = oldDetect
+		setupRestore = oldRestore
+		setupInstall = oldInstall
+		setupYes = oldYes
+		setupOnly = oldOnly
+		setupBases = oldBases
+	})
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) {
+	return 0, errors.New("read failed")
+}
+
+func setupTestCommand() (*cobra.Command, *bytes.Buffer) {
+	var out bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	return cmd, &out
 }

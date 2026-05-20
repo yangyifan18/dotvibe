@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/bootstrap"
@@ -17,40 +19,18 @@ var (
 	setupBases   []string
 )
 
+var (
+	detectSetupTools = func() []bootstrap.ToolCheckResult {
+		return bootstrap.DetectTools(bootstrap.DefaultToolSpecs())
+	}
+	setupRestore = runSetupRestore
+)
+
 var setupCmd = &cobra.Command{
 	Use:   "setup [archive]",
 	Short: "Bootstrap supported coding agents and optionally restore a backup",
 	Args:  cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		archive := ""
-		if len(args) == 1 {
-			archive = args[0]
-		}
-
-		results := bootstrap.DetectTools(bootstrap.DefaultToolSpecs())
-		printSetupPlan(cmd.OutOrStdout(), results, archive)
-		if !setupInstall {
-			return nil
-		}
-
-		commands := buildInstallCommandPlan(results)
-		if len(commands) > 0 {
-			if !setupYes && !confirmSetupInstall(commands) {
-				fmt.Fprintln(cmd.OutOrStdout(), "Cancelled.")
-				return nil
-			}
-			for _, installCommand := range commands {
-				if err := runInstallCommand(cmd.OutOrStdout(), installCommand); err != nil {
-					return err
-				}
-			}
-		}
-
-		if archive != "" {
-			return runSetupRestore(archive)
-		}
-		return nil
-	},
+	RunE:  runSetup,
 }
 
 func init() {
@@ -59,6 +39,46 @@ func init() {
 	setupCmd.Flags().StringVar(&setupOnly, "only", "", "restore only specified tools after setup")
 	setupCmd.Flags().StringSliceVar(&setupBases, "base", nil, "base archive for incremental restore")
 	rootCmd.AddCommand(setupCmd)
+}
+
+func runSetup(cmd *cobra.Command, args []string) error {
+	archive := ""
+	if len(args) == 1 {
+		archive = args[0]
+	}
+
+	out := cmd.OutOrStdout()
+	errOut := cmd.ErrOrStderr()
+	results := detectSetupTools()
+	printSetupPlan(out, results, archive)
+	if !setupInstall {
+		return nil
+	}
+
+	commands := buildInstallCommandPlan(results)
+	if !setupYes && (len(commands) > 0 || archive != "") {
+		if !confirmSetupActions(inputReader(cmd), out, commands, archive) {
+			fmt.Fprintln(out, "Cancelled.")
+			return nil
+		}
+	}
+	for _, installCommand := range commands {
+		if err := runInstallCommand(out, errOut, inputReader(cmd), installCommand); err != nil {
+			return err
+		}
+	}
+
+	if archive != "" {
+		return setupRestore(archive)
+	}
+	return nil
+}
+
+func inputReader(cmd *cobra.Command) io.Reader {
+	if cmd != nil {
+		return cmd.InOrStdin()
+	}
+	return os.Stdin
 }
 
 func printSetupPlan(w io.Writer, results []bootstrap.ToolCheckResult, archive string) {
@@ -106,26 +126,32 @@ func isAutoRunnableInstallCommand(installCommand bootstrap.InstallCommand) bool 
 		installCommand.Executable != ""
 }
 
-func confirmSetupInstall(commands []bootstrap.InstallCommand) bool {
-	fmt.Println("\nRun install commands?")
+func confirmSetupActions(r io.Reader, w io.Writer, commands []bootstrap.InstallCommand, archive string) bool {
+	fmt.Fprintln(w, "\nRun setup actions?")
 	for _, installCommand := range commands {
-		fmt.Printf("  %s\n", installCommand.Command)
+		fmt.Fprintf(w, "  Install: %s\n", installCommand.Command)
 	}
-	fmt.Print("Proceed? [Y/n] ")
-	var answer string
-	fmt.Scanln(&answer)
+	if archive != "" {
+		fmt.Fprintf(w, "  Restore backup: %s\n", archive)
+	}
+	fmt.Fprint(w, "Proceed? [Y/n] ")
+	answer, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	answer = strings.TrimSpace(answer)
 	return answer == "" || answer == "y" || answer == "Y"
 }
 
-func runInstallCommand(w io.Writer, installCommand bootstrap.InstallCommand) error {
+func runInstallCommand(w io.Writer, errW io.Writer, in io.Reader, installCommand bootstrap.InstallCommand) error {
 	if !isAutoRunnableInstallCommand(installCommand) {
 		return fmt.Errorf("install command requires manual review: %s", installCommand.Command)
 	}
 	fmt.Fprintf(w, "Running: %s\n", installCommand.Command)
 	cmd := exec.Command(installCommand.Executable, installCommand.Args...)
 	cmd.Stdout = w
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	cmd.Stderr = errW
+	cmd.Stdin = in
 	return cmd.Run()
 }
 
