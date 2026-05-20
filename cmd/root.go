@@ -20,6 +20,7 @@ Usage:
   dotvibe status              Show detected tools
   dotvibe export              Create a backup
   dotvibe list <archive>      Show backup contents
+  dotvibe diff <a> <b>        Compare two backups
   dotvibe import <archive>    Restore from backup`,
 }
 

@@ -44,6 +44,7 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | `status` | Detect all vibe coding tools on your machine |
 | `export` | Backup config + memory + skills into a single `.tar.gz` |
 | `list` | Inspect what's inside a backup |
+| `diff` | Compare two backups by path and checksum |
 | `import` | Restore selectively — by tool, by project, or everything |
 
 **Supported tools:** Claude Code &middot; Codex CLI &middot; OpenCode
@@ -70,7 +71,7 @@ cd dotvibe && go build -o dotvibe .
 # 1. See what you've got
 dotvibe status
 
-# 2. Back it up (auth excluded by default)
+# 2. Back it up (auth and symlinks excluded by default)
 dotvibe export
 
 # 3. Send the .tar.gz to your new Mac (AirDrop, scp, whatever)
@@ -92,6 +93,12 @@ dotvibe import backup.tar.gz --yes --project "~/Code/MyProject"
 # Exclude patterns during export
 dotvibe export --exclude "*/Research/*" --exclude "transcripts/*.jsonl"
 
+# Overwrite an existing backup intentionally
+dotvibe export -o backup.tar.gz --force
+
+# Compare two backups
+dotvibe diff old.tar.gz new.tar.gz
+
 # Include session history (excluded by default)
 dotvibe export --with-history
 ```
@@ -106,10 +113,11 @@ dotvibe export --with-history
 | **Auth** | No | `auth.json`, API keys, tokens |
 | **History** | Opt-in | Sessions, transcripts (`--with-history`) |
 | **Cache** | No | Telemetry, cache, temp files |
+| **Symlinks** | No | Skipped to avoid unsafe cross-machine links |
 
 ## Restore Safety
 
-`import` writes into the target machine's agent config directories. Preview first when possible:
+`import` writes into the target machine's agent config directories. Preview first when possible; the preview lists each file, target path, and whether it will write, skip, or overwrite:
 
 ```bash
 dotvibe import backup.tar.gz --dry-run
@@ -122,7 +130,7 @@ For end-to-end tests, use a temporary HOME instead of your real profile:
 HOME=/tmp/dotvibe-restore ./dotvibe import backup.tar.gz --yes
 ```
 
-Project filtering currently applies to Claude Code project memory. Codex CLI and OpenCode are restored at tool level.
+Project filtering currently applies to Claude Code project memory. Codex CLI and OpenCode are restored at tool level. New backups include per-file SHA-256 checksums; `list`, `diff`, and `import` reject corrupted archives when checksums are present.
 
 ## Documentation
 
@@ -151,6 +159,7 @@ macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding �
 | `status` | 检测本机所有 vibe coding 工具 |
 | `export` | 把 config + memory + skills 打包成一个 `.tar.gz` |
 | `list` | 查看备份包里有什么 |
+| `diff` | 按路径和 checksum 比较两个备份包 |
 | `import` | 选择性恢复 — 按工具、按项目、或全部 |
 
 **支持工具：** Claude Code &middot; Codex CLI &middot; OpenCode
@@ -177,7 +186,7 @@ cd dotvibe && go build -o dotvibe .
 # 1. 看看本机有什么
 dotvibe status
 
-# 2. 备份（默认排除 auth）
+# 2. 备份（默认排除 auth 和 symlink）
 dotvibe export
 
 # 3. 把 .tar.gz 发到新 Mac（AirDrop、scp、随便）
@@ -199,6 +208,12 @@ dotvibe import backup.tar.gz --yes --project "~/Code/MyProject"
 # 导出时排除特定路径
 dotvibe export --exclude "*/Research/*" --exclude "transcripts/*.jsonl"
 
+# 明确覆盖已有备份
+dotvibe export -o backup.tar.gz --force
+
+# 比较两个备份
+dotvibe diff old.tar.gz new.tar.gz
+
 # 包含会话历史（默认不含）
 dotvibe export --with-history
 ```
@@ -213,10 +228,11 @@ dotvibe export --with-history
 | **Auth** | 否 | `auth.json`、API keys、tokens |
 | **历史** | 可选 | 会话、transcripts（`--with-history`） |
 | **缓存** | 否 | telemetry、cache、临时文件 |
+| **符号链接** | 否 | 跳过，避免跨机器恢复不安全链接 |
 
 ## 恢复安全
 
-`import` 会写入目标机器上的 agent 配置目录。建议先 preview：
+`import` 会写入目标机器上的 agent 配置目录。建议先 preview；preview 会列出每个文件、目标路径，以及 write / skip / overwrite 动作：
 
 ```bash
 dotvibe import backup.tar.gz --dry-run
@@ -229,7 +245,7 @@ dotvibe import backup.tar.gz --dry-run --project "~/Code/MyProject"
 HOME=/tmp/dotvibe-restore ./dotvibe import backup.tar.gz --yes
 ```
 
-项目过滤当前只适用于 Claude Code project memory。Codex CLI 和 OpenCode 按工具级别恢复。
+项目过滤当前只适用于 Claude Code project memory。Codex CLI 和 OpenCode 按工具级别恢复。新备份包含每文件 SHA-256 checksum；`list`、`diff`、`import` 会在 checksum 存在时拒绝损坏归档。
 
 ## 文档
 

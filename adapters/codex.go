@@ -1,6 +1,8 @@
 package adapters
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -147,47 +149,93 @@ func (a *CodexAdapter) Status() ToolStatus {
 	return s
 }
 
-func (a *CodexAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) error {
-	for _, entry := range entries {
-		destPath := a.adaptPath(entry.InArchive)
+func (a *CodexAdapter) FilterRestoreEntries(entries []FileEntry, opts RestoreOpts) []FileEntry {
+	return entries
+}
 
-		if _, err := os.Stat(destPath); err == nil && !opts.Force {
+func (a *CodexAdapter) PlanRestore(entries []FileEntry, opts RestoreOpts) ([]RestorePlanEntry, error) {
+	plans := make([]RestorePlanEntry, 0, len(entries))
+	for _, entry := range entries {
+		destPath, err := a.adaptPath(entry.InArchive)
+		if err != nil {
+			return nil, err
+		}
+		plan := RestorePlanEntry{FileEntry: entry, TargetPath: destPath, Action: RestoreWrite, Reason: "new file"}
+		if _, err := os.Stat(destPath); err == nil {
+			if opts.Force {
+				plan.Action = RestoreOverwrite
+				plan.Reason = "target exists and --force is set"
+			} else {
+				plan.Action = RestoreSkip
+				plan.Reason = "target exists; use --force to overwrite"
+			}
+		}
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
+func (a *CodexAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) (RestoreSummary, error) {
+	plans, err := a.PlanRestore(entries, opts)
+	if err != nil {
+		return RestoreSummary{}, err
+	}
+
+	var summary RestoreSummary
+	var errs []error
+	for _, plan := range plans {
+		if plan.Action == RestoreSkip {
+			summary.Skipped++
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return err
+		if err := os.MkdirAll(filepath.Dir(plan.TargetPath), 0755); err != nil {
+			summary.Failed++
+			errs = append(errs, err)
+			continue
 		}
 
-		srcData, err := os.ReadFile(filepath.Join(archiveDir, entry.InArchive))
+		srcData, err := os.ReadFile(filepath.Join(archiveDir, plan.InArchive))
 		if err != nil {
-			return err
+			summary.Failed++
+			errs = append(errs, err)
+			continue
 		}
 
-		if err := os.WriteFile(destPath, srcData, 0644); err != nil {
-			return err
+		if err := os.WriteFile(plan.TargetPath, srcData, 0644); err != nil {
+			summary.Failed++
+			errs = append(errs, err)
+			continue
+		}
+		if plan.Action == RestoreOverwrite {
+			summary.Overwritten++
+		} else {
+			summary.Written++
 		}
 	}
-	return nil
+	return summary, errors.Join(errs...)
 }
 
-func (a *CodexAdapter) adaptPath(archivePath string) string {
+func (a *CodexAdapter) adaptPath(archivePath string) (string, error) {
+	if !strings.HasPrefix(archivePath, "codex-cli/") {
+		return "", fmt.Errorf("unsupported Codex archive path: %s", archivePath)
+	}
 	rel := strings.TrimPrefix(archivePath, "codex-cli/")
 	parts := strings.SplitN(rel, "/", 2)
 	if len(parts) < 2 {
-		return filepath.Join(a.baseDir(), rel)
+		return "", fmt.Errorf("unsupported Codex archive path: %s", archivePath)
 	}
 
 	switch parts[0] {
 	case "config":
-		return filepath.Join(a.baseDir(), parts[1])
+		return filepath.Join(a.baseDir(), parts[1]), nil
 	case "agents":
-		return filepath.Join(a.baseDir(), "agents", parts[1])
+		return filepath.Join(a.baseDir(), "agents", parts[1]), nil
 	case "skills":
-		return filepath.Join(a.baseDir(), "skills", parts[1])
+		return filepath.Join(a.baseDir(), "skills", parts[1]), nil
 	case "sessions":
-		return filepath.Join(a.baseDir(), "sessions", parts[1])
+		return filepath.Join(a.baseDir(), "sessions", parts[1]), nil
 	default:
-		return filepath.Join(a.baseDir(), rel)
+		return "", fmt.Errorf("unsupported Codex archive path: %s", archivePath)
 	}
 }

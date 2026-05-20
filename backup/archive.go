@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,12 @@ import (
 
 // CreateArchive writes a tar.gz file containing manifest and all entries.
 func CreateArchive(dst string, manifest *Manifest, entries []adapters.FileEntry) error {
+	files, err := buildFileManifest(entries)
+	if err != nil {
+		return err
+	}
+	manifest.Files = files
+
 	f, err := os.Create(dst)
 	if err != nil {
 		return err
@@ -157,6 +164,11 @@ func (ar *ArchiveReader) index() error {
 	if ar.Manifest == nil {
 		return fmt.Errorf("archive missing manifest.json")
 	}
+	if len(ar.Manifest.Files) > 0 {
+		if err := ar.verifyManifestFiles(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -214,6 +226,47 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 // Close releases all resources.
 func (ar *ArchiveReader) Close() error {
 	return ar.f.Close()
+}
+
+func (ar *ArchiveReader) verifyManifestFiles() error {
+	expected := map[string]FileManifest{}
+	for _, file := range ar.Manifest.Files {
+		expected[file.Path] = file
+	}
+
+	actual := map[string]archiveFile{}
+	for _, file := range ar.files {
+		if file.Name != "manifest.json" {
+			actual[file.Name] = file
+		}
+	}
+
+	for path, want := range expected {
+		got, ok := actual[path]
+		if !ok {
+			return fmt.Errorf("manifest file missing from archive: %s", path)
+		}
+		if got.Size != want.Size {
+			return fmt.Errorf("archive file size mismatch for %s: got %d, want %d", path, got.Size, want.Size)
+		}
+		sum, err := ar.fileSHA256(path)
+		if err != nil {
+			return err
+		}
+		if sum != want.SHA256 {
+			return fmt.Errorf("archive file checksum mismatch for %s", path)
+		}
+	}
+	return nil
+}
+
+func (ar *ArchiveReader) fileSHA256(name string) (string, error) {
+	data, err := ar.ReadFile(name)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 // ExtractArchive extracts all files from a tar.gz to a directory.
@@ -309,4 +362,39 @@ func safeExtractTarget(destDir, name string) (string, error) {
 		return "", fmt.Errorf("archive entry escapes destination: %s", name)
 	}
 	return targetAbs, nil
+}
+
+func buildFileManifest(entries []adapters.FileEntry) ([]FileManifest, error) {
+	files := make([]FileManifest, 0, len(entries))
+	for _, entry := range entries {
+		info, err := os.Stat(entry.SourcePath)
+		if err != nil {
+			return nil, err
+		}
+		sum, err := sourceFileSHA256(entry.SourcePath)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, FileManifest{
+			Path:     entry.InArchive,
+			Size:     info.Size(),
+			SHA256:   sum,
+			Category: entry.Category,
+		})
+	}
+	return files, nil
+}
+
+func sourceFileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }

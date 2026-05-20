@@ -66,7 +66,7 @@ func TestClaudeAdapter_RestoreLegacyClaudeMarkdownToProjectRoot(t *testing.T) {
 	writeTestFile(t, archivePath, "# rules")
 
 	a := &ClaudeAdapter{home: home}
-	err := a.RestoreFiles([]FileEntry{{InArchive: "claude-code/memory/-Users-young-App/CLAUDE.md"}}, archiveDir, RestoreOpts{})
+	_, err := a.RestoreFiles([]FileEntry{{InArchive: "claude-code/memory/-Users-young-App/CLAUDE.md"}}, archiveDir, RestoreOpts{})
 	if err != nil {
 		t.Fatalf("RestoreFiles: %v", err)
 	}
@@ -103,5 +103,25 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClaudeAdapter_PlanRestoreRejectsUnknownArchivePath(t *testing.T) {
+	a := &ClaudeAdapter{home: t.TempDir()}
+	_, err := a.PlanRestore([]FileEntry{{InArchive: "claude-code/unknown/file"}}, RestoreOpts{})
+	if err == nil {
+		t.Fatal("expected unknown archive path to be rejected")
+	}
+}
+
+func TestClaudeAdapter_FilterRestoreEntriesAppliesProjectFilter(t *testing.T) {
+	a := &ClaudeAdapter{home: t.TempDir()}
+	entries := []FileEntry{
+		{InArchive: "claude-code/projects/-Users-young-App/memory/MEMORY.md"},
+		{InArchive: "claude-code/projects/-Users-young-Other/memory/MEMORY.md"},
+	}
+	filtered := a.FilterRestoreEntries(entries, RestoreOpts{Project: "-Users-young-App"})
+	if len(filtered) != 1 || filtered[0].InArchive != entries[0].InArchive {
+		t.Fatalf("unexpected filtered entries: %#v", filtered)
 	}
 }

@@ -11,6 +11,7 @@ type Manifest struct {
 	Created  time.Time               `json:"created"`
 	Hostname string                  `json:"hostname"`
 	Tools    map[string]ToolManifest `json:"tools"`
+	Files    []FileManifest          `json:"files,omitempty"`
 }
 
 type ToolManifest struct {
@@ -19,6 +20,13 @@ type ToolManifest struct {
 	ProjectCount int      `json:"project_count,omitempty"`
 	FileCount    int      `json:"file_count,omitempty"`
 	AgentCount   int      `json:"agent_count,omitempty"`
+}
+
+type FileManifest struct {
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	SHA256   string `json:"sha256"`
+	Category string `json:"category,omitempty"`
 }
 
 func WriteManifest(path string, m *Manifest) error {

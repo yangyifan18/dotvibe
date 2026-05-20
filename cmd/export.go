@@ -17,6 +17,7 @@ var (
 	exportWithHist bool
 	exportOnly     string
 	exportExcludes []string
+	exportForce    bool
 )
 
 var exportCmd = &cobra.Command{
@@ -39,6 +40,9 @@ var exportCmd = &cobra.Command{
 		if output == "" {
 			output = fmt.Sprintf("dotvibe-%s.tar.gz", time.Now().Format("2006-01-02"))
 		}
+		if _, err := os.Stat(output); err == nil && !exportForce {
+			return fmt.Errorf("output file already exists: %s (use --force to overwrite)", output)
+		}
 
 		var allEntries []adapters.FileEntry
 		toolManifests := make(map[string]backup.ToolManifest)
@@ -57,9 +61,7 @@ var exportCmd = &cobra.Command{
 
 			var filtered []adapters.FileEntry
 			for _, f := range files {
-				// Skip directories
-				info, err := os.Stat(f.SourcePath)
-				if err != nil || info.IsDir() {
+				if !isExportableFile(f.SourcePath) {
 					continue
 				}
 				if !excluder.IsExcluded(f.InArchive) {
@@ -84,15 +86,11 @@ var exportCmd = &cobra.Command{
 				FileCount: len(filtered),
 			}
 
-			// Count projects for claude-code
 			if adapter.ID() == "claude-code" {
-				s := adapter.Status()
-				tm.ProjectCount = s.Projects
+				tm.ProjectCount = countClaudeProjects(filtered)
 			}
-			// Count agents for codex-cli
 			if adapter.ID() == "codex-cli" {
-				s := adapter.Status()
-				tm.AgentCount = s.Agents
+				tm.AgentCount = countCodexAgents(filtered)
 			}
 
 			toolManifests[adapter.ID()] = tm
@@ -106,7 +104,7 @@ var exportCmd = &cobra.Command{
 			Tools:    toolManifests,
 		}
 
-		fmt.Printf("Creating backup... ")
+		fmt.Printf("Creating backup (%d files)... ", len(allEntries))
 		if err := backup.CreateArchive(output, manifest, allEntries); err != nil {
 			return fmt.Errorf("failed to create archive: %w", err)
 		}
@@ -117,11 +115,17 @@ var exportCmd = &cobra.Command{
 	},
 }
 
+func isExportableFile(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
 func init() {
 	exportCmd.Flags().StringVarP(&exportOutput, "output", "o", "", "output file path")
 	exportCmd.Flags().BoolVar(&exportWithHist, "with-history", false, "include session/transcript history")
 	exportCmd.Flags().StringVar(&exportOnly, "only", "", "only backup specified tools (comma-separated)")
 	exportCmd.Flags().StringSliceVar(&exportExcludes, "exclude", nil, "exclude matching paths (glob patterns)")
+	exportCmd.Flags().BoolVar(&exportForce, "force", false, "overwrite output file if it already exists")
 	rootCmd.AddCommand(exportCmd)
 }
 
@@ -143,4 +147,27 @@ func containsTool(tools []string, id string) bool {
 		}
 	}
 	return false
+}
+
+func countClaudeProjects(entries []adapters.FileEntry) int {
+	projects := map[string]bool{}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.InArchive, "claude-code/projects/") {
+			rel := strings.TrimPrefix(entry.InArchive, "claude-code/projects/")
+			if project, _, ok := strings.Cut(rel, "/"); ok {
+				projects[project] = true
+			}
+		}
+	}
+	return len(projects)
+}
+
+func countCodexAgents(entries []adapters.FileEntry) int {
+	count := 0
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.InArchive, "codex-cli/agents/") {
+			count++
+		}
+	}
+	return count
 }

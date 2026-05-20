@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -72,6 +73,15 @@ var importCmd = &cobra.Command{
 		if importProject != "" {
 			fmt.Printf("Project filter: %s\n", adapters.ClaudeProjectKey(importProject))
 		}
+		opts := adapters.RestoreOpts{
+			Force:   importForce,
+			Project: importProject,
+		}
+		preview, err := buildRestorePreview(toolFiles, opts)
+		if err != nil {
+			return err
+		}
+		printRestorePreview(preview)
 		if importDryRun {
 			fmt.Println("Dry run: no files restored.")
 			return nil
@@ -99,11 +109,8 @@ var importCmd = &cobra.Command{
 		}
 
 		// Restore each tool
-		opts := adapters.RestoreOpts{
-			Force:   importForce,
-			Project: importProject,
-		}
-
+		var total adapters.RestoreSummary
+		var errs []error
 		for _, adapter := range adapters.AllAdapters() {
 			entries, ok := toolFiles[adapter.ID()]
 			if !ok {
@@ -111,13 +118,23 @@ var importCmd = &cobra.Command{
 			}
 
 			fmt.Printf("Restoring %s... ", adapter.Name())
-			if err := adapter.RestoreFiles(entries, tmpDir, opts); err != nil {
+			summary, err := adapter.RestoreFiles(entries, tmpDir, opts)
+			total.Written += summary.Written
+			total.Skipped += summary.Skipped
+			total.Overwritten += summary.Overwritten
+			total.Failed += summary.Failed
+			if err != nil {
 				fmt.Printf("ERROR: %v\n", err)
+				errs = append(errs, err)
 				continue
 			}
-			fmt.Printf("done (%d files)\n", len(entries))
+			fmt.Printf("done (written=%d skipped=%d overwritten=%d)\n", summary.Written, summary.Skipped, summary.Overwritten)
 		}
 
+		fmt.Printf("Summary: written=%d skipped=%d overwritten=%d failed=%d\n", total.Written, total.Skipped, total.Overwritten, total.Failed)
+		if total.Failed > 0 || len(errs) > 0 {
+			return fmt.Errorf("restore failed: %w", errors.Join(errs...))
+		}
 		return nil
 	},
 }
@@ -134,8 +151,11 @@ func init() {
 func filterImportEntriesByProject(toolFiles map[string][]adapters.FileEntry, project string) map[string][]adapters.FileEntry {
 	filtered := map[string][]adapters.FileEntry{}
 	for toolID, entries := range toolFiles {
-		if toolID == "claude-code" {
-			entries = adapters.FilterProjectEntries(entries, project)
+		for _, adapter := range adapters.AllAdapters() {
+			if adapter.ID() == toolID {
+				entries = adapter.FilterRestoreEntries(entries, adapters.RestoreOpts{Project: project})
+				break
+			}
 		}
 		if len(entries) > 0 {
 			filtered[toolID] = entries
@@ -150,4 +170,27 @@ func countImportEntries(toolFiles map[string][]adapters.FileEntry) int {
 		total += len(entries)
 	}
 	return total
+}
+
+func buildRestorePreview(toolFiles map[string][]adapters.FileEntry, opts adapters.RestoreOpts) ([]adapters.RestorePlanEntry, error) {
+	var preview []adapters.RestorePlanEntry
+	for _, adapter := range adapters.AllAdapters() {
+		entries, ok := toolFiles[adapter.ID()]
+		if !ok {
+			continue
+		}
+		plan, err := adapter.PlanRestore(entries, opts)
+		if err != nil {
+			return nil, err
+		}
+		preview = append(preview, plan...)
+	}
+	return preview, nil
+}
+
+func printRestorePreview(preview []adapters.RestorePlanEntry) {
+	fmt.Println("Restore preview:")
+	for _, entry := range preview {
+		fmt.Printf("  %s -> %s [%s: %s]\n", entry.InArchive, entry.TargetPath, entry.Action, entry.Reason)
+	}
 }

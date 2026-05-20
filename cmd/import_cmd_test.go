@@ -85,3 +85,20 @@ func writeFileForImportTest(t *testing.T, path, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestFilterImportEntriesByProjectUsesAdapterFilters(t *testing.T) {
+	toolFiles := map[string][]adapters.FileEntry{
+		"claude-code": {
+			{InArchive: "claude-code/projects/-Users-young-App/memory/MEMORY.md"},
+			{InArchive: "claude-code/projects/-Users-young-Other/memory/MEMORY.md"},
+		},
+		"codex-cli": {{InArchive: "codex-cli/config/config.toml"}},
+	}
+	filtered := filterImportEntriesByProject(toolFiles, "-Users-young-App")
+	if len(filtered["claude-code"]) != 1 {
+		t.Fatalf("claude filter count = %d, want 1", len(filtered["claude-code"]))
+	}
+	if len(filtered["codex-cli"]) != 1 {
+		t.Fatalf("codex entries should be preserved")
+	}
+}

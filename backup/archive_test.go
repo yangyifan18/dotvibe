@@ -239,3 +239,38 @@ func createRawArchive(t *testing.T, files map[string]string) string {
 	}
 	return path
 }
+
+func TestCreateArchiveWritesFileManifestWithChecksums(t *testing.T) {
+	src := t.TempDir()
+	filePath := filepath.Join(src, "config.json")
+	writeFile(t, filePath, `{"ok":true}`)
+	manifest := &Manifest{Version: "1.0.0", Tools: map[string]ToolManifest{"tool": {Included: []string{"config"}, FileCount: 1}}}
+	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")
+
+	if err := CreateArchive(archivePath, manifest, []adapters.FileEntry{{SourcePath: filePath, InArchive: "tool/config.json", Category: adapters.CategoryConfig}}); err != nil {
+		t.Fatalf("CreateArchive: %v", err)
+	}
+	ra, err := ReadArchive(archivePath)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ra.Close()
+	if len(ra.Manifest.Files) != 1 {
+		t.Fatalf("manifest files = %d, want 1", len(ra.Manifest.Files))
+	}
+	fm := ra.Manifest.Files[0]
+	if fm.Path != "tool/config.json" || fm.Category != adapters.CategoryConfig || fm.SHA256 == "" || fm.Size == 0 {
+		t.Fatalf("unexpected file manifest: %#v", fm)
+	}
+}
+
+func TestReadArchiveRejectsChecksumMismatch(t *testing.T) {
+	archivePath := createRawArchive(t, map[string]string{
+		"manifest.json":    `{"version":"1.0.0","tools":{},"files":[{"path":"tool/config.json","size":2,"sha256":"0000000000000000000000000000000000000000000000000000000000000000","category":"config"}]}`,
+		"tool/config.json": "{}",
+	})
+	_, err := ReadArchive(archivePath)
+	if err == nil {
+		t.Fatal("expected checksum mismatch to fail")
+	}
+}

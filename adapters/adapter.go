@@ -14,6 +14,12 @@ type FileEntry struct {
 	Size       int64
 }
 
+const (
+	RestoreWrite     = "write"
+	RestoreSkip      = "skip"
+	RestoreOverwrite = "overwrite"
+)
+
 type ExportOpts struct {
 	WithHistory     bool
 	ExcludePatterns []string
@@ -36,13 +42,29 @@ type RestoreOpts struct {
 	Project string
 }
 
+type RestorePlanEntry struct {
+	FileEntry
+	TargetPath string
+	Action     string
+	Reason     string
+}
+
+type RestoreSummary struct {
+	Written     int
+	Skipped     int
+	Overwritten int
+	Failed      int
+}
+
 type Adapter interface {
 	Name() string
 	ID() string
 	Detect() bool
 	ListFiles(opts ExportOpts) []FileEntry
 	Status() ToolStatus
-	RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) error
+	FilterRestoreEntries(entries []FileEntry, opts RestoreOpts) []FileEntry
+	PlanRestore(entries []FileEntry, opts RestoreOpts) ([]RestorePlanEntry, error)
+	RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) (RestoreSummary, error)
 }
 
 func AllAdapters() []Adapter {

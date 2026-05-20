@@ -1,6 +1,8 @@
 package adapters
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,41 +114,86 @@ func (a *OpenCodeAdapter) Status() ToolStatus {
 	return s
 }
 
-func (a *OpenCodeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) error {
-	a.ensureHome()
-	for _, entry := range entries {
-		destPath := a.adaptPath(entry.InArchive)
+func (a *OpenCodeAdapter) FilterRestoreEntries(entries []FileEntry, opts RestoreOpts) []FileEntry {
+	return entries
+}
 
-		if _, err := os.Stat(destPath); err == nil && !opts.Force {
+func (a *OpenCodeAdapter) PlanRestore(entries []FileEntry, opts RestoreOpts) ([]RestorePlanEntry, error) {
+	a.ensureHome()
+	plans := make([]RestorePlanEntry, 0, len(entries))
+	for _, entry := range entries {
+		destPath, err := a.adaptPath(entry.InArchive)
+		if err != nil {
+			return nil, err
+		}
+		plan := RestorePlanEntry{FileEntry: entry, TargetPath: destPath, Action: RestoreWrite, Reason: "new file"}
+		if _, err := os.Stat(destPath); err == nil {
+			if opts.Force {
+				plan.Action = RestoreOverwrite
+				plan.Reason = "target exists and --force is set"
+			} else {
+				plan.Action = RestoreSkip
+				plan.Reason = "target exists; use --force to overwrite"
+			}
+		}
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
+func (a *OpenCodeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) (RestoreSummary, error) {
+	plans, err := a.PlanRestore(entries, opts)
+	if err != nil {
+		return RestoreSummary{}, err
+	}
+
+	var summary RestoreSummary
+	var errs []error
+	for _, plan := range plans {
+		if plan.Action == RestoreSkip {
+			summary.Skipped++
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return err
+		if err := os.MkdirAll(filepath.Dir(plan.TargetPath), 0755); err != nil {
+			summary.Failed++
+			errs = append(errs, err)
+			continue
 		}
 
-		srcData, err := os.ReadFile(filepath.Join(archiveDir, entry.InArchive))
+		srcData, err := os.ReadFile(filepath.Join(archiveDir, plan.InArchive))
 		if err != nil {
-			return err
+			summary.Failed++
+			errs = append(errs, err)
+			continue
 		}
 
-		if err := os.WriteFile(destPath, srcData, 0644); err != nil {
-			return err
+		if err := os.WriteFile(plan.TargetPath, srcData, 0644); err != nil {
+			summary.Failed++
+			errs = append(errs, err)
+			continue
+		}
+		if plan.Action == RestoreOverwrite {
+			summary.Overwritten++
+		} else {
+			summary.Written++
 		}
 	}
-	return nil
+	return summary, errors.Join(errs...)
 }
 
-func (a *OpenCodeAdapter) adaptPath(archivePath string) string {
+func (a *OpenCodeAdapter) adaptPath(archivePath string) (string, error) {
 	switch {
 	case strings.HasPrefix(archivePath, "opencode/xdg-config/"):
 		rel := strings.TrimPrefix(archivePath, "opencode/xdg-config/")
-		return filepath.Join(a.home, ".config", "opencode", rel)
+		return filepath.Join(a.home, ".config", "opencode", rel), nil
 	case strings.HasPrefix(archivePath, "opencode/home-config/"):
 		rel := strings.TrimPrefix(archivePath, "opencode/home-config/")
-		return filepath.Join(a.home, ".opencode", rel)
-	default:
+		return filepath.Join(a.home, ".opencode", rel), nil
+	case strings.HasPrefix(archivePath, "opencode/config/"):
 		rel := strings.TrimPrefix(archivePath, "opencode/config/")
-		return filepath.Join(a.home, ".config", "opencode", rel)
+		return filepath.Join(a.home, ".config", "opencode", rel), nil
+	default:
+		return "", fmt.Errorf("unsupported OpenCode archive path: %s", archivePath)
 	}
 }

@@ -8,9 +8,9 @@ import (
 
 func TestManifestJSON(t *testing.T) {
 	m := Manifest{
-		Version:   "1.0.0",
-		Created:   time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC),
-		Hostname:  "test-mac",
+		Version:  "1.0.0",
+		Created:  time.Date(2026, 5, 19, 12, 0, 0, 0, time.UTC),
+		Hostname: "test-mac",
 		Tools: map[string]ToolManifest{
 			"claude-code": {
 				Included:     []string{"config", "memory", "skills"},
