@@ -1049,6 +1049,86 @@ func TestOpenArchiveSetFailsWhenRequiredBaseMissing(t *testing.T) {
 	}
 }
 
+func TestOpenArchiveSetForFilesFailsWhenTransitiveBaseMissing(t *testing.T) {
+	dir := t.TempDir()
+	rootPayload := filepath.Join(dir, "root-memory.md")
+	writeFile(t, rootPayload, "# root memory\n")
+	rootPath := filepath.Join(dir, "root.tar.gz")
+	rootManifest := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+	}
+	if err := CreateArchive(rootPath, rootManifest, []adapters.FileEntry{{
+		SourcePath: rootPayload,
+		InArchive:  "tool/memory.md",
+		Category:   "memory",
+	}}); err != nil {
+		t.Fatalf("CreateArchive root: %v", err)
+	}
+	rootReader, err := ReadArchive(rootPath)
+	if err != nil {
+		t.Fatalf("ReadArchive root: %v", err)
+	}
+	rootDigest := rootReader.ManifestDigest()
+	if err := rootReader.Close(); err != nil {
+		t.Fatalf("Close root: %v", err)
+	}
+
+	midPath := filepath.Join(dir, "mid.tar.gz")
+	midManifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Base:          &BaseArchiveRef{FileName: "root.tar.gz", ManifestSHA256: rootDigest},
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		Files: []FileManifest{{
+			Path:     "tool/memory.md",
+			ToolID:   "tool",
+			Size:     int64(len("# root memory\n")),
+			SHA256:   mustFileSHA256ForTest(t, rootPayload),
+			Category: "memory",
+			Storage:  FileStorageBase,
+		}},
+	}
+	writeManifestOnlyArchive(t, midPath, midManifest)
+	midReader, err := ReadArchive(midPath)
+	if err != nil {
+		t.Fatalf("ReadArchive mid: %v", err)
+	}
+	midDigest := midReader.ManifestDigest()
+	if err := midReader.Close(); err != nil {
+		t.Fatalf("Close mid: %v", err)
+	}
+
+	headPath := filepath.Join(dir, "head.tar.gz")
+	headManifest := Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Base:          &BaseArchiveRef{FileName: "mid.tar.gz", ManifestSHA256: midDigest},
+		Tools:         map[string]ToolManifest{"tool": {Included: []string{"memory"}, FileCount: 1}},
+		Files: []FileManifest{{
+			Path:     "tool/memory.md",
+			ToolID:   "tool",
+			Size:     int64(len("# root memory\n")),
+			SHA256:   mustFileSHA256ForTest(t, rootPayload),
+			Category: "memory",
+			Storage:  FileStorageBase,
+		}},
+	}
+	writeManifestOnlyArchive(t, headPath, headManifest)
+
+	_, err = OpenArchiveSetForFiles(headPath, []string{midPath}, []string{"tool/memory.md"})
+	if err == nil {
+		t.Fatal("expected missing transitive root base to fail during preflight")
+	}
+	if !strings.Contains(err.Error(), rootDigest) {
+		t.Fatalf("error = %q, want transitive base fingerprint %s", err.Error(), rootDigest)
+	}
+}
+
 func writeManifestOnlyArchive(t *testing.T, archivePath string, manifest Manifest) {
 	t.Helper()
 	manifest.Normalize()

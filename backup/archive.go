@@ -264,12 +264,39 @@ func (set *ArchiveSet) validateRequiredBaseForFiles(selected []string) error {
 		if file.Storage != FileStorageBase {
 			continue
 		}
-		if set.Head.Manifest.Base == nil {
-			return fmt.Errorf("base-backed file %s has no base fingerprint", file.Path)
+		if err := set.validateBaseChainForFile(set.Head, file.Path, map[string]struct{}{}); err != nil {
+			return err
 		}
-		if _, ok := set.baseByDigest[set.Head.Manifest.Base.ManifestSHA256]; !ok {
-			return fmt.Errorf("required base archive missing for %s: expected manifest sha256 %s", file.Path, set.Head.Manifest.Base.ManifestSHA256)
+	}
+	return nil
+}
+
+func (set *ArchiveSet) validateBaseChainForFile(reader *ArchiveReader, name string, seen map[string]struct{}) error {
+	if reader.Manifest == nil || reader.Manifest.Base == nil {
+		return fmt.Errorf("base-backed file %s has no base fingerprint", name)
+	}
+	digest := reader.Manifest.Base.ManifestSHA256
+	if _, ok := seen[digest]; ok {
+		return fmt.Errorf("base archive cycle while validating %s at manifest sha256 %s", name, digest)
+	}
+	seen[digest] = struct{}{}
+	base, ok := set.baseByDigest[digest]
+	if !ok {
+		return fmt.Errorf("required base archive missing for %s: expected manifest sha256 %s", name, digest)
+	}
+	file, ok := base.logicalByPath[name]
+	if !ok {
+		if len(base.logicalByPath) == 0 {
+			for _, candidate := range base.ListFiles() {
+				if candidate == name {
+					return nil
+				}
+			}
 		}
+		return fmt.Errorf("base archive %s does not contain logical file %s", digest, name)
+	}
+	if file.Storage == FileStorageBase {
+		return set.validateBaseChainForFile(base, name, seen)
 	}
 	return nil
 }
