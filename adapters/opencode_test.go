@@ -36,3 +36,23 @@ func TestOpenCodeAdapter_ListFiles(t *testing.T) {
 		t.Error("ListFiles returned empty")
 	}
 }
+
+func TestOpenCodeAdapter_PreservesSourceConfigRoots(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".config", "opencode", "opencode.json"), "config")
+	writeTestFile(t, filepath.Join(home, ".opencode", "oh-my-openagent.json"), "legacy")
+
+	a := &OpenCodeAdapter{home: home}
+	entries := a.ListFiles(ExportOpts{})
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		seen[entry.InArchive] = true
+	}
+
+	if !seen["opencode/xdg-config/opencode.json"] {
+		t.Fatalf("missing xdg config archive path; got %#v", seen)
+	}
+	if !seen["opencode/home-config/oh-my-openagent.json"] {
+		t.Fatalf("missing home config archive path; got %#v", seen)
+	}
+}

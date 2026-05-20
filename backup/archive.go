@@ -8,8 +8,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/young/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/adapters"
 )
 
 // CreateArchive writes a tar.gz file containing manifest and all entries.
@@ -87,7 +88,7 @@ func writeFileToTar(tw *tar.Writer, srcPath, archivePath string) error {
 // ReadArchive opens a tar.gz for reading. Caller must call Close().
 type ArchiveReader struct {
 	f        *os.File
-	gz       *gzip.Reader
+	path     string
 	Manifest *Manifest
 	files    []archiveFile
 }
@@ -95,7 +96,6 @@ type ArchiveReader struct {
 type archiveFile struct {
 	Name string
 	Size int64
-	Data []byte
 }
 
 // ReadArchive opens and indexes an archive.
@@ -105,13 +105,7 @@ func ReadArchive(path string) (*ArchiveReader, error) {
 		return nil, err
 	}
 
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		f.Close()
-		return nil, err
-	}
-
-	ar := &ArchiveReader{f: f, gz: gz}
+	ar := &ArchiveReader{f: f, path: path}
 	if err := ar.index(); err != nil {
 		f.Close()
 		return nil, err
@@ -121,7 +115,16 @@ func ReadArchive(path string) (*ArchiveReader, error) {
 }
 
 func (ar *ArchiveReader) index() error {
-	tr := tar.NewReader(ar.gz)
+	if _, err := ar.f.Seek(0, 0); err != nil {
+		return err
+	}
+	gz, err := gzip.NewReader(ar.f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -131,20 +134,28 @@ func (ar *ArchiveReader) index() error {
 			return err
 		}
 
-		data, err := io.ReadAll(tr)
-		if err != nil {
+		if err := validateTarHeader(hdr); err != nil {
 			return err
 		}
 
 		if hdr.Name == "manifest.json" {
+			data, err := io.ReadAll(tr)
+			if err != nil {
+				return err
+			}
 			var m Manifest
 			if err := json.Unmarshal(data, &m); err != nil {
 				return err
 			}
 			ar.Manifest = &m
+		} else if _, err := io.Copy(io.Discard, tr); err != nil {
+			return err
 		}
 
-		ar.files = append(ar.files, archiveFile{Name: hdr.Name, Size: hdr.Size, Data: data})
+		ar.files = append(ar.files, archiveFile{Name: hdr.Name, Size: hdr.Size})
+	}
+	if ar.Manifest == nil {
+		return fmt.Errorf("archive missing manifest.json")
 	}
 	return nil
 }
@@ -162,9 +173,39 @@ func (ar *ArchiveReader) ListFiles() []string {
 
 // ReadFile returns the contents of a file from the archive.
 func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
-	for _, f := range ar.files {
-		if f.Name == name {
-			return f.Data, nil
+	if err := validateArchivePath(name); err != nil {
+		return nil, err
+	}
+
+	f, err := os.Open(ar.path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		if err := validateTarHeader(hdr); err != nil {
+			return nil, err
+		}
+		if hdr.Name == name {
+			return io.ReadAll(tr)
+		}
+		if _, err := io.Copy(io.Discard, tr); err != nil {
+			return nil, err
 		}
 	}
 	return nil, fmt.Errorf("file not found in archive: %s", name)
@@ -172,7 +213,6 @@ func (ar *ArchiveReader) ReadFile(name string) ([]byte, error) {
 
 // Close releases all resources.
 func (ar *ArchiveReader) Close() error {
-	ar.gz.Close()
 	return ar.f.Close()
 }
 
@@ -200,7 +240,14 @@ func ExtractArchive(archivePath, destDir string) error {
 			return err
 		}
 
-		target := filepath.Join(destDir, hdr.Name)
+		if err := validateTarHeader(hdr); err != nil {
+			return err
+		}
+
+		target, err := safeExtractTarget(destDir, hdr.Name)
+		if err != nil {
+			return err
+		}
 
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
@@ -219,4 +266,47 @@ func ExtractArchive(archivePath, destDir string) error {
 	}
 
 	return nil
+}
+
+func validateTarHeader(hdr *tar.Header) error {
+	if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		return fmt.Errorf("unsupported archive entry type for %q", hdr.Name)
+	}
+	return validateArchivePath(hdr.Name)
+}
+
+func validateArchivePath(name string) error {
+	if name == "" {
+		return fmt.Errorf("archive entry has empty path")
+	}
+	if filepath.IsAbs(name) || strings.HasPrefix(name, "/") {
+		return fmt.Errorf("archive entry uses absolute path: %s", name)
+	}
+	if strings.Contains(name, "\\") {
+		return fmt.Errorf("archive entry uses backslash path: %s", name)
+	}
+	clean := filepath.Clean(name)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("archive entry escapes destination: %s", name)
+	}
+	return nil
+}
+
+func safeExtractTarget(destDir, name string) (string, error) {
+	if err := validateArchivePath(name); err != nil {
+		return "", err
+	}
+	destAbs, err := filepath.Abs(destDir)
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(destAbs, filepath.Clean(name))
+	targetAbs, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	if targetAbs != destAbs && !strings.HasPrefix(targetAbs, destAbs+string(os.PathSeparator)) {
+		return "", fmt.Errorf("archive entry escapes destination: %s", name)
+	}
+	return targetAbs, nil
 }

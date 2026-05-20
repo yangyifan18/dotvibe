@@ -56,6 +56,10 @@ func (a *OpenCodeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 	var entries []FileEntry
 
 	for _, dir := range a.configDirs() {
+		rootName := "xdg-config"
+		if filepath.Base(dir) == ".opencode" {
+			rootName = "home-config"
+		}
 		filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
@@ -65,7 +69,7 @@ func (a *OpenCodeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 				return nil
 			}
 
-			archivePath := "opencode/config/" + filepath.ToSlash(rel)
+			archivePath := "opencode/" + rootName + "/" + filepath.ToSlash(rel)
 			entries = append(entries, FileEntry{
 				SourcePath: path,
 				InArchive:  archivePath,
@@ -111,8 +115,7 @@ func (a *OpenCodeAdapter) Status() ToolStatus {
 func (a *OpenCodeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) error {
 	a.ensureHome()
 	for _, entry := range entries {
-		rel := strings.TrimPrefix(entry.InArchive, "opencode/config/")
-		destPath := filepath.Join(a.home, ".config", "opencode", rel)
+		destPath := a.adaptPath(entry.InArchive)
 
 		if _, err := os.Stat(destPath); err == nil && !opts.Force {
 			continue
@@ -132,4 +135,18 @@ func (a *OpenCodeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, o
 		}
 	}
 	return nil
+}
+
+func (a *OpenCodeAdapter) adaptPath(archivePath string) string {
+	switch {
+	case strings.HasPrefix(archivePath, "opencode/xdg-config/"):
+		rel := strings.TrimPrefix(archivePath, "opencode/xdg-config/")
+		return filepath.Join(a.home, ".config", "opencode", rel)
+	case strings.HasPrefix(archivePath, "opencode/home-config/"):
+		rel := strings.TrimPrefix(archivePath, "opencode/home-config/")
+		return filepath.Join(a.home, ".opencode", rel)
+	default:
+		rel := strings.TrimPrefix(archivePath, "opencode/config/")
+		return filepath.Join(a.home, ".config", "opencode", rel)
+	}
 }

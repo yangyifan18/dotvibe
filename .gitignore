@@ -1,3 +1,4 @@
 dotvibe
 *.tar.gz
 docs/superpowers/
+dist/

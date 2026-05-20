@@ -1,4 +1,4 @@
-module github.com/young/dotvibe
+module github.com/yangyifan18/dotvibe
 
 go 1.26.1
 

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/young/dotvibe/cmd"
+	"github.com/yangyifan18/dotvibe/cmd"
 )
 
 func main() {
