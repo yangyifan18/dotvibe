@@ -17,6 +17,14 @@ const (
 	ApplyActionOverwrite = "overwrite"
 	ApplyActionSave      = "save"
 	ApplyActionSkip      = "skip"
+
+	ConflictChoiceKeep    = "k"
+	ConflictChoiceUse     = "r"
+	ConflictChoiceSave    = "s"
+	ConflictChoiceDiff    = "d"
+	ConflictChoiceKeepAll = "ka"
+	ConflictChoiceUseAll  = "ra"
+	ConflictChoiceSaveAll = "sa"
 )
 
 type ApplyInput struct {
@@ -83,6 +91,28 @@ func ResolveNonInteractiveConflicts(entries []ApplyPlanEntry, opts ConflictOptio
 			resolved[i].ResolvedAction = ApplyActionOverwrite
 		} else {
 			resolved[i].ResolvedAction = ApplyActionSkip
+		}
+	}
+	return resolved
+}
+
+func ApplyConflictChoice(entries []ApplyPlanEntry, choice string) []ApplyPlanEntry {
+	resolved := make([]ApplyPlanEntry, len(entries))
+	copy(resolved, entries)
+	for i := range resolved {
+		if resolved[i].Action != ApplyActionConflict {
+			continue
+		}
+		switch choice {
+		case ConflictChoiceKeep, ConflictChoiceKeepAll:
+			resolved[i].ResolvedAction = ApplyActionSkip
+		case ConflictChoiceUse, ConflictChoiceUseAll:
+			resolved[i].ResolvedAction = ApplyActionOverwrite
+		case ConflictChoiceSave, ConflictChoiceSaveAll:
+			resolved[i].ResolvedAction = ApplyActionSave
+		}
+		if choice == ConflictChoiceKeep || choice == ConflictChoiceUse || choice == ConflictChoiceSave {
+			break
 		}
 	}
 	return resolved

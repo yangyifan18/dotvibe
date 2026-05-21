@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -95,7 +97,15 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resolved := recipe.ResolveNonInteractiveConflicts(plan.Entries, recipe.ConflictOptions{Yes: opts.Yes, Force: opts.Force})
+	resolved := plan.Entries
+	if opts.Yes {
+		resolved = recipe.ResolveNonInteractiveConflicts(plan.Entries, recipe.ConflictOptions{Yes: opts.Yes, Force: opts.Force})
+	} else {
+		resolved, err = resolveInteractiveConflicts(plan.Entries, os.Stdin, w)
+		if err != nil {
+			return err
+		}
+	}
 	record.Entries = rollbackEntriesFromPlan(resolved)
 	if err := store.Save(record); err != nil {
 		return err
@@ -274,4 +284,42 @@ func markRollbackFailed(record *rollback.RollbackRecord, idx int, err error) {
 
 func printRecipeApplySummary(w io.Writer, summary recipeApplySummary) {
 	fmt.Fprintf(w, "Summary: written=%d overwritten=%d saved=%d skipped=%d failed=%d\n", summary.Written, summary.Overwritten, summary.Saved, summary.Skipped, summary.Failed)
+}
+
+func resolveInteractiveConflicts(entries []recipe.ApplyPlanEntry, r io.Reader, w io.Writer) ([]recipe.ApplyPlanEntry, error) {
+	resolved := make([]recipe.ApplyPlanEntry, len(entries))
+	copy(resolved, entries)
+	scanner := bufio.NewScanner(r)
+	for i := range resolved {
+		if resolved[i].Action != recipe.ApplyActionConflict {
+			continue
+		}
+		for {
+			fmt.Fprintf(w, "Conflict: %s\nTarget: %s\n[k] keep local [r] use recipe [s] save but not replace [d] show diff [ka] keep all [ra] use all [sa] save all\nChoice: ", resolved[i].Entry.InArchive, resolved[i].TargetPath)
+			if !scanner.Scan() {
+				resolved[i].ResolvedAction = recipe.ApplyActionSkip
+				break
+			}
+			choice := strings.TrimSpace(scanner.Text())
+			switch choice {
+			case recipe.ConflictChoiceDiff:
+				current, _ := os.ReadFile(resolved[i].TargetPath)
+				fmt.Fprintln(w, recipe.UnifiedTextDiff(resolved[i].TargetPath, resolved[i].Entry.InArchive, current, resolved[i].RecipeContent))
+				continue
+			case recipe.ConflictChoiceKeep:
+				resolved[i].ResolvedAction = recipe.ApplyActionSkip
+			case recipe.ConflictChoiceUse:
+				resolved[i].ResolvedAction = recipe.ApplyActionOverwrite
+			case recipe.ConflictChoiceSave:
+				resolved[i].ResolvedAction = recipe.ApplyActionSave
+			case recipe.ConflictChoiceKeepAll, recipe.ConflictChoiceUseAll, recipe.ConflictChoiceSaveAll:
+				return recipe.ApplyConflictChoice(resolved, choice), nil
+			default:
+				fmt.Fprintln(w, "Unknown choice")
+				continue
+			}
+			break
+		}
+	}
+	return resolved, scanner.Err()
 }

@@ -58,3 +58,22 @@ func TestIncomingPathUsesStateDirAndLogicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestApplyConflictChoiceAllStrategies(t *testing.T) {
+	entries := []ApplyPlanEntry{
+		{Action: ApplyActionConflict, ResolvedAction: ApplyActionConflict},
+		{Action: ApplyActionConflict, ResolvedAction: ApplyActionConflict},
+	}
+	resolved := ApplyConflictChoice(entries, ConflictChoiceUseAll)
+	if resolved[0].ResolvedAction != ApplyActionOverwrite || resolved[1].ResolvedAction != ApplyActionOverwrite {
+		t.Fatalf("use all = %#v", resolved)
+	}
+	resolved = ApplyConflictChoice(entries, ConflictChoiceSaveAll)
+	if resolved[0].ResolvedAction != ApplyActionSave || resolved[1].ResolvedAction != ApplyActionSave {
+		t.Fatalf("save all = %#v", resolved)
+	}
+	resolved = ApplyConflictChoice(entries, ConflictChoiceKeepAll)
+	if resolved[0].ResolvedAction != ApplyActionSkip || resolved[1].ResolvedAction != ApplyActionSkip {
+		t.Fatalf("keep all = %#v", resolved)
+	}
+}
