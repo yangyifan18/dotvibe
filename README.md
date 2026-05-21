@@ -44,6 +44,8 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | `diff` | Compare two backups by manifest path, checksum, tool, or category |
 | `setup` | Bootstrap supported agent CLIs on a new Mac, then optionally restore |
 | `import` | Restore selectively — by tool, by project, or everything |
+| `recipe export` | Create a shareable `.vibe` recipe with skills, agents, global rules, and safe settings |
+| `apply` | Apply a `.vibe` recipe without needing a full backup |
 
 **Supported tools:** Claude Code &middot; Codex CLI &middot; OpenCode
 
@@ -115,6 +117,26 @@ dotvibe diff --json old.tar.gz new.tar.gz
 # Include session history (excluded by default)
 dotvibe export --with-history
 ```
+
+## Vibe Recipes
+
+Recipes are for sharing a setup with teammates or the community. They strip personal data and keep only shareable items such as Claude Code skills, Codex agents, global rules, and safe settings.
+
+```bash
+# Export a recipe
+dotvibe recipe export --name "YYF Vibe Stack" --author "yangyifan" -o yyf.vibe
+
+# Preview before applying
+dotvibe apply yyf.vibe --dry-run
+
+# Apply missing files, skipping conflicts
+dotvibe apply yyf.vibe --yes
+
+# Intentionally overwrite conflicts
+dotvibe apply yyf.vibe --force --yes
+```
+
+Recipes do not include Claude project memory, transcripts, Codex sessions, auth files, telemetry, or cache data.
 
 ## What Gets Backed Up
 

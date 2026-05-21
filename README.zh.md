@@ -44,6 +44,8 @@ macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding �
 | `diff` | 按 manifest 路径、checksum、工具或分类比较两个备份包 |
 | `setup` | 在新 Mac 上检测/安装支持的 agent CLI，然后可选恢复备份 |
 | `import` | 选择性恢复 — 按工具、按项目、或全部 |
+| `recipe export` | 导出只包含 skills、agents、全局规则和安全 settings 的 `.vibe` 配方 |
+| `apply` | 应用 `.vibe` 配方，不需要完整备份 |
 
 **支持工具：** Claude Code &middot; Codex CLI &middot; OpenCode
 
@@ -115,6 +117,26 @@ dotvibe diff --json old.tar.gz new.tar.gz
 # 包含会话历史（默认不含）
 dotvibe export --with-history
 ```
+
+## Vibe Recipes
+
+Recipe 用来把一套 vibe coding 配置分享给同事或社区。它会剥离个人数据，只保留 Claude Code skills、Codex agents、全局规则和安全 settings 等可共享内容。
+
+```bash
+# 导出 recipe
+dotvibe recipe export --name "YYF Vibe Stack" --author "yangyifan" -o yyf.vibe
+
+# 应用前预览
+dotvibe apply yyf.vibe --dry-run
+
+# 应用缺失文件，遇到冲突默认跳过
+dotvibe apply yyf.vibe --yes
+
+# 明确覆盖冲突
+dotvibe apply yyf.vibe --force --yes
+```
+
+Recipe 不包含 Claude 项目 memory、transcripts、Codex sessions、auth 文件、telemetry 或 cache 数据。
 
 ## 备份范围
 
