@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"os"
 
@@ -117,32 +116,8 @@ var importCmd = &cobra.Command{
 			return fmt.Errorf("failed to extract archive: %w", err)
 		}
 
-		// Restore each tool
-		var total adapters.RestoreSummary
-		var errs []error
-		for _, adapter := range adapters.AllAdapters() {
-			entries, ok := toolFiles[adapter.ID()]
-			if !ok {
-				continue
-			}
-
-			fmt.Printf("Restoring %s... ", adapter.Name())
-			summary, err := adapter.RestoreFiles(entries, tmpDir, opts)
-			total.Written += summary.Written
-			total.Skipped += summary.Skipped
-			total.Overwritten += summary.Overwritten
-			total.Failed += summary.Failed
-			if err != nil {
-				fmt.Printf("ERROR: %v\n", err)
-				errs = append(errs, err)
-				continue
-			}
-			fmt.Printf("done (written=%d skipped=%d overwritten=%d)\n", summary.Written, summary.Skipped, summary.Overwritten)
-		}
-
-		fmt.Printf("Summary: written=%d skipped=%d overwritten=%d failed=%d\n", total.Written, total.Skipped, total.Overwritten, total.Failed)
-		if total.Failed > 0 || len(errs) > 0 {
-			return fmt.Errorf("restore failed: %w", errors.Join(errs...))
+		if err := restoreGroupedFilesWithLabel(toolFiles, tmpDir, opts, "Restoring", "restore"); err != nil {
+			return err
 		}
 		return nil
 	},

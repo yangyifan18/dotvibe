@@ -2,6 +2,7 @@ package backup
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,6 +122,46 @@ func TestManifestV2MetadataJSON(t *testing.T) {
 	}
 	if got.Files[0].Storage != FileStorageBase || got.Files[0].ToolID != "claude-code" {
 		t.Fatalf("file storage metadata not preserved: %#v", got.Files[0])
+	}
+}
+
+func TestRecipeManifestMetadataJSON(t *testing.T) {
+	created := time.Date(2026, 5, 21, 8, 0, 0, 0, time.UTC)
+	m := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindRecipe,
+		Created:       created,
+		Hostname:      "source-mac",
+		Recipe: &RecipeMetadata{
+			Name:        "YYF Vibe Stack",
+			Description: "Claude skills and Codex agents for daily coding",
+			Author:      "yangyifan",
+			Schema:      RecipeSchemaV1,
+			SharePolicy: "shareable-only",
+		},
+		Tools: map[string]ToolManifest{
+			"claude-code": {Included: []string{"settings", "rules", "skills"}, FileCount: 2},
+		},
+		Files: []FileManifest{
+			{Path: "claude-code/skills/reviewer/SKILL.md", ToolID: "claude-code", Category: "skills", Size: 8, SHA256: strings.Repeat("a", 64), Storage: FileStorageInline, StoredPath: "objects/sha256/aa"},
+		},
+	}
+
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Manifest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	got.Normalize()
+	if got.ArchiveKind != ArchiveKindRecipe {
+		t.Fatalf("archive kind = %q, want %q", got.ArchiveKind, ArchiveKindRecipe)
+	}
+	if got.Recipe == nil || got.Recipe.Name != "YYF Vibe Stack" || got.Recipe.Schema != RecipeSchemaV1 {
+		t.Fatalf("recipe metadata not preserved: %#v", got.Recipe)
 	}
 }
 

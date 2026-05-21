@@ -54,6 +54,26 @@ func TestCodexAdapter_ListFiles(t *testing.T) {
 	assertArchiveEntry(t, files, "codex-cli/agents/reviewer.md", CategorySkills)
 }
 
+func TestCodexAdapter_ListRecipeFilesIncludesAgentsAndRules(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n")
+	writeTestFile(t, filepath.Join(home, ".codex", "AGENTS.md"), "# Agents\n")
+	writeTestFile(t, filepath.Join(home, ".codex", "CODEX.md"), "# Codex\n")
+	writeTestFile(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "# Reviewer\n")
+	writeTestFile(t, filepath.Join(home, ".codex", "skills", "ship", "SKILL.md"), "# Ship\n")
+	writeTestFile(t, filepath.Join(home, ".codex", "sessions", "private.jsonl"), "private\n")
+
+	adapter := &CodexAdapter{home: home}
+	paths := entryArchivePathsForTest(adapter.ListRecipeFiles(RecipeOpts{IncludeSettings: true}))
+
+	assertContainsString(t, paths, "codex-cli/config/config.toml")
+	assertContainsString(t, paths, "codex-cli/rules/AGENTS.md")
+	assertContainsString(t, paths, "codex-cli/rules/CODEX.md")
+	assertContainsString(t, paths, "codex-cli/agents/reviewer.md")
+	assertContainsString(t, paths, "codex-cli/skills/ship/SKILL.md")
+	assertNotContainsPrefix(t, paths, "codex-cli/sessions/")
+}
+
 func TestCodexAdapter_Status(t *testing.T) {
 	a := &CodexAdapter{}
 	if !a.Detect() {

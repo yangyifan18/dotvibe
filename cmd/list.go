@@ -19,7 +19,20 @@ var listCmd = &cobra.Command{
 		defer ar.Close()
 
 		m := ar.Manifest
-		fmt.Printf("dotvibe backup — %s\n", m.Created.Format("2006-01-02"))
+		archiveLabel := "backup"
+		if m.ArchiveKind == backup.ArchiveKindRecipe && m.Recipe != nil {
+			archiveLabel = "recipe"
+			fmt.Printf("dotvibe recipe — %s\n", m.Recipe.Name)
+			if m.Recipe.Description != "" {
+				fmt.Printf("Description: %s\n", m.Recipe.Description)
+			}
+			if m.Recipe.Author != "" {
+				fmt.Printf("Author: %s\n", m.Recipe.Author)
+			}
+			fmt.Printf("Created: %s\n", m.Created.Format("2006-01-02"))
+		} else {
+			fmt.Printf("dotvibe backup — %s\n", m.Created.Format("2006-01-02"))
+		}
 		fmt.Printf("From: %s\n\n", m.Hostname)
 
 		files := ar.ListFiles()
@@ -40,7 +53,7 @@ var listCmd = &cobra.Command{
 			fmt.Printf("  %s: %v (%d files)\n", toolID, tm.Included, count)
 		}
 
-		fmt.Printf("\nTotal files in archive: %d\n", len(files))
+		fmt.Printf("\nTotal files in %s: %d\n", archiveLabel, len(files))
 		return nil
 	},
 }

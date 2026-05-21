@@ -3,6 +3,7 @@ package adapters
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,45 @@ func TestClaudeAdapter_ListFiles(t *testing.T) {
 	assertArchiveEntry(t, files, "claude-code/projects/demo/MEMORY.md", CategoryMemory)
 }
 
+func TestClaudeAdapter_ListRecipeFilesExcludesProjectMemory(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"theme":"dark"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "# Global rule\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "skills", "reviewer", "SKILL.md"), "# Skill\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "agents", "planner.md"), "# Planner\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "commands", "ship.md"), "/ship\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "projects", "secret", "MEMORY.md"), "private project\n")
+	writeTestFile(t, filepath.Join(home, ".claude", "transcripts", "session.jsonl"), "private transcript\n")
+
+	adapter := &ClaudeAdapter{home: home}
+	entries := adapter.ListRecipeFiles(RecipeOpts{IncludeSettings: true})
+	paths := entryArchivePathsForTest(entries)
+
+	assertContainsString(t, paths, "claude-code/config/settings.json")
+	assertContainsString(t, paths, "claude-code/rules/CLAUDE.md")
+	assertContainsString(t, paths, "claude-code/skills/reviewer/SKILL.md")
+	assertContainsString(t, paths, "claude-code/agents/planner.md")
+	assertContainsString(t, paths, "claude-code/commands/ship.md")
+	assertNotContainsPrefix(t, paths, "claude-code/projects/")
+	assertNotContainsPrefix(t, paths, "claude-code/transcripts/")
+}
+
+func TestClaudeAdapter_ListRecipeFilesExcludesPluginRuntimeData(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "plugin.json"), `{"name":"reviewer"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "data", "reviewer", "state.json"), `{"secret":"state"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "cache", "bundle.zip"), "cache")
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "auth.json"), `{"token":"secret"}`)
+
+	adapter := &ClaudeAdapter{home: home}
+	paths := entryArchivePathsForTest(adapter.ListRecipeFiles(RecipeOpts{}))
+
+	assertContainsString(t, paths, "claude-code/plugins/reviewer/plugin.json")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/data/")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/reviewer/cache/")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/reviewer/auth.json")
+}
+
 func TestClaudeAdapter_Status(t *testing.T) {
 	a := &ClaudeAdapter{}
 	if !a.Detect() {
@@ -87,6 +127,41 @@ func TestClaudeAdapter_RestoreLegacyClaudeMarkdownToProjectRoot(t *testing.T) {
 	}
 	if string(got) != "# rules" {
 		t.Fatalf("restored content = %q", got)
+	}
+}
+
+func TestClaudeAdapter_RecipePathsRestoreToShareableRoots(t *testing.T) {
+	home := t.TempDir()
+	adapter := &ClaudeAdapter{home: home}
+	cases := map[string]string{
+		"claude-code/rules/CLAUDE.md":           filepath.Join(home, ".claude", "CLAUDE.md"),
+		"claude-code/agents/planner.md":         filepath.Join(home, ".claude", "agents", "planner.md"),
+		"claude-code/commands/ship.md":          filepath.Join(home, ".claude", "commands", "ship.md"),
+		"claude-code/skills/reviewer/SKILL.md":  filepath.Join(home, ".claude", "skills", "reviewer", "SKILL.md"),
+		"claude-code/plugins/codex/plugin.json": filepath.Join(home, ".claude", "plugins", "codex", "plugin.json"),
+		"claude-code/config/settings.json":      filepath.Join(home, ".claude", "settings.json"),
+	}
+	for archivePath, want := range cases {
+		got, err := adapter.adaptPath(archivePath)
+		if err != nil {
+			t.Fatalf("adaptPath(%s): %v", archivePath, err)
+		}
+		if got != want {
+			t.Fatalf("adaptPath(%s) = %s, want %s", archivePath, got, want)
+		}
+	}
+}
+
+func TestCodexAdapter_RecipeRulesRestoreToConfigRoot(t *testing.T) {
+	home := t.TempDir()
+	adapter := &CodexAdapter{home: home}
+	got, err := adapter.adaptPath("codex-cli/rules/AGENTS.md")
+	if err != nil {
+		t.Fatalf("adaptPath: %v", err)
+	}
+	want := filepath.Join(home, ".codex", "AGENTS.md")
+	if got != want {
+		t.Fatalf("adaptPath = %s, want %s", got, want)
 	}
 }
 
@@ -126,6 +201,33 @@ func writeTestFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func entryArchivePathsForTest(entries []FileEntry) []string {
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		paths = append(paths, entry.InArchive)
+	}
+	return paths
+}
+
+func assertContainsString(t *testing.T, items []string, want string) {
+	t.Helper()
+	for _, item := range items {
+		if item == want {
+			return
+		}
+	}
+	t.Fatalf("%q not found in %#v", want, items)
+}
+
+func assertNotContainsPrefix(t *testing.T, items []string, prefix string) {
+	t.Helper()
+	for _, item := range items {
+		if strings.HasPrefix(item, prefix) {
+			t.Fatalf("unexpected path with prefix %q in %#v", prefix, items)
+		}
 	}
 }
 

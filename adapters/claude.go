@@ -30,6 +30,11 @@ func (a *ClaudeAdapter) Detect() bool {
 	a.ensureHome()
 	paths := []string{
 		filepath.Join(a.home, ".claude", "settings.json"),
+		filepath.Join(a.home, ".claude", "CLAUDE.md"),
+		filepath.Join(a.home, ".claude", "skills"),
+		filepath.Join(a.home, ".claude", "agents"),
+		filepath.Join(a.home, ".claude", "commands"),
+		filepath.Join(a.home, ".claude", "plugins"),
 		filepath.Join(a.home, ".claude", "projects"),
 	}
 	for _, path := range paths {
@@ -121,6 +126,63 @@ func (a *ClaudeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 	}
 
 	return entries
+}
+
+func (a *ClaudeAdapter) ListRecipeFiles(opts RecipeOpts) []FileEntry {
+	var entries []FileEntry
+	base := a.baseDir()
+
+	if opts.IncludeSettings {
+		settings := filepath.Join(base, "settings.json")
+		if info, err := os.Stat(settings); err == nil {
+			entries = append(entries, FileEntry{
+				SourcePath: settings,
+				InArchive:  "claude-code/config/settings.json",
+				Category:   CategorySettings,
+				Size:       info.Size(),
+			})
+		}
+	}
+
+	globalRule := filepath.Join(base, "CLAUDE.md")
+	if info, err := os.Stat(globalRule); err == nil {
+		entries = append(entries, FileEntry{
+			SourcePath: globalRule,
+			InArchive:  "claude-code/rules/CLAUDE.md",
+			Category:   CategoryRules,
+			Size:       info.Size(),
+		})
+	}
+
+	entries = append(entries, a.walkDir(filepath.Join(base, "skills"), "claude-code/skills", CategorySkills)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "agents"), "claude-code/agents", CategoryAgents)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "commands"), "claude-code/commands", CategoryCommands)...)
+	for _, entry := range a.walkDir(filepath.Join(base, "plugins"), "claude-code/plugins", CategorySkills) {
+		if isClaudeRecipePluginEntry(entry) {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func isClaudeRecipePluginEntry(entry FileEntry) bool {
+	lower := strings.ToLower(entry.InArchive)
+	if strings.HasPrefix(lower, "claude-code/plugins/data/") {
+		return false
+	}
+	blockedFragments := []string{"/cache/", "/artifacts/", "/node_modules/"}
+	for _, fragment := range blockedFragments {
+		if strings.Contains(lower, fragment) {
+			return false
+		}
+	}
+	blockedNames := []string{"auth.json", "credentials.json", "token.json", ".env"}
+	for _, name := range blockedNames {
+		if strings.HasSuffix(lower, "/"+name) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *ClaudeAdapter) walkDir(dir, archivePrefix, category string) []FileEntry {
@@ -270,6 +332,8 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) (string, error) {
 	switch parts[0] {
 	case "config":
 		return filepath.Join(a.baseDir(), parts[1]), nil
+	case "rules":
+		return filepath.Join(a.baseDir(), parts[1]), nil
 	case "projects":
 		subparts := strings.SplitN(parts[1], "/", 2)
 		if len(subparts) < 2 {
@@ -287,6 +351,10 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) (string, error) {
 		return filepath.Join(a.baseDir(), "projects", subparts[0], "memory", subparts[1]), nil
 	case "skills":
 		return filepath.Join(a.baseDir(), "skills", parts[1]), nil
+	case "agents":
+		return filepath.Join(a.baseDir(), "agents", parts[1]), nil
+	case "commands":
+		return filepath.Join(a.baseDir(), "commands", parts[1]), nil
 	case "plugins":
 		return filepath.Join(a.baseDir(), "plugins", parts[1]), nil
 	case "transcripts":
