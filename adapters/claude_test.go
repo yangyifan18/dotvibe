@@ -118,12 +118,12 @@ func TestClaudeAdapter_RecipePathsRestoreToShareableRoots(t *testing.T) {
 	home := t.TempDir()
 	adapter := &ClaudeAdapter{home: home}
 	cases := map[string]string{
-		"claude-code/rules/CLAUDE.md":              filepath.Join(home, ".claude", "CLAUDE.md"),
-		"claude-code/agents/planner.md":            filepath.Join(home, ".claude", "agents", "planner.md"),
-		"claude-code/commands/ship.md":             filepath.Join(home, ".claude", "commands", "ship.md"),
-		"claude-code/skills/reviewer/SKILL.md":     filepath.Join(home, ".claude", "skills", "reviewer", "SKILL.md"),
-		"claude-code/plugins/codex/plugin.json":    filepath.Join(home, ".claude", "plugins", "codex", "plugin.json"),
-		"claude-code/config/settings.json":         filepath.Join(home, ".claude", "settings.json"),
+		"claude-code/rules/CLAUDE.md":           filepath.Join(home, ".claude", "CLAUDE.md"),
+		"claude-code/agents/planner.md":         filepath.Join(home, ".claude", "agents", "planner.md"),
+		"claude-code/commands/ship.md":          filepath.Join(home, ".claude", "commands", "ship.md"),
+		"claude-code/skills/reviewer/SKILL.md":  filepath.Join(home, ".claude", "skills", "reviewer", "SKILL.md"),
+		"claude-code/plugins/codex/plugin.json": filepath.Join(home, ".claude", "plugins", "codex", "plugin.json"),
+		"claude-code/config/settings.json":      filepath.Join(home, ".claude", "settings.json"),
 	}
 	for archivePath, want := range cases {
 		got, err := adapter.adaptPath(archivePath)
