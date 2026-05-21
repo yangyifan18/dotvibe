@@ -41,7 +41,8 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | `status` | Detect all vibe coding tools on your machine |
 | `export` | Backup config + memory + skills into a single `.tar.gz` |
 | `list` | Inspect what's inside a backup |
-| `diff` | Compare two backups by path and checksum |
+| `diff` | Compare two backups by manifest path, checksum, tool, or category |
+| `setup` | Bootstrap supported agent CLIs on a new Mac, then optionally restore |
 | `import` | Restore selectively — by tool, by project, or everything |
 
 **Supported tools:** Claude Code &middot; Codex CLI &middot; OpenCode
@@ -93,8 +94,23 @@ dotvibe export --exclude "*/Research/*" --exclude "transcripts/*.jsonl"
 # Overwrite an existing backup intentionally
 dotvibe export -o backup.tar.gz --force
 
+# Create a full backup
+dotvibe export -o dotvibe-full.tar.gz
+
+# Create an incremental backup against a previous archive
+dotvibe export --base dotvibe-full.tar.gz -o dotvibe-delta.tar.gz
+
+# Restore an incremental backup chain
+dotvibe import dotvibe-delta.tar.gz --base dotvibe-full.tar.gz --yes
+
 # Compare two backups
 dotvibe diff old.tar.gz new.tar.gz
+
+# Show Claude Code memory changes between two backups
+dotvibe diff --only claude-code --category memory old.tar.gz new.tar.gz
+
+# Produce JSON for automation
+dotvibe diff --json old.tar.gz new.tar.gz
 
 # Include session history (excluded by default)
 dotvibe export --with-history
@@ -111,6 +127,18 @@ dotvibe export --with-history
 | **History** | Opt-in | Sessions, transcripts (`--with-history`) |
 | **Cache** | No | Telemetry, cache, temp files |
 | **Symlinks** | No | Skipped to avoid unsafe cross-machine links |
+
+## Setup Safety
+
+`dotvibe setup` is dry-run by default. It prints detected tools and install commands. Use `--install` to run safe package-manager commands after confirmation. Commands marked as manual-review are shown but not run automatically.
+
+```bash
+# Preview detected tools, install commands, and optional restore plan
+dotvibe setup backup.tar.gz
+
+# Run safe install commands non-interactively, then restore
+dotvibe setup backup.tar.gz --install --yes
+```
 
 ## Restore Safety
 
