@@ -308,6 +308,8 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) (string, error) {
 	switch parts[0] {
 	case "config":
 		return filepath.Join(a.baseDir(), parts[1]), nil
+	case "rules":
+		return filepath.Join(a.baseDir(), parts[1]), nil
 	case "projects":
 		subparts := strings.SplitN(parts[1], "/", 2)
 		if len(subparts) < 2 {
@@ -325,6 +327,10 @@ func (a *ClaudeAdapter) adaptPath(archivePath string) (string, error) {
 		return filepath.Join(a.baseDir(), "projects", subparts[0], "memory", subparts[1]), nil
 	case "skills":
 		return filepath.Join(a.baseDir(), "skills", parts[1]), nil
+	case "agents":
+		return filepath.Join(a.baseDir(), "agents", parts[1]), nil
+	case "commands":
+		return filepath.Join(a.baseDir(), "commands", parts[1]), nil
 	case "plugins":
 		return filepath.Join(a.baseDir(), "plugins", parts[1]), nil
 	case "transcripts":

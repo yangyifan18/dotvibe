@@ -273,6 +273,8 @@ func (a *CodexAdapter) adaptPath(archivePath string) (string, error) {
 	switch parts[0] {
 	case "config":
 		return filepath.Join(a.baseDir(), parts[1]), nil
+	case "rules":
+		return filepath.Join(a.baseDir(), parts[1]), nil
 	case "agents":
 		return filepath.Join(a.baseDir(), "agents", parts[1]), nil
 	case "skills":
