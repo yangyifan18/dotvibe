@@ -9,9 +9,12 @@ import (
 const (
 	ArchiveKindFull        = "full"
 	ArchiveKindIncremental = "incremental"
+	ArchiveKindRecipe      = "recipe"
 
 	FileStorageInline = "inline"
 	FileStorageBase   = "base"
+
+	RecipeSchemaV1 = "dotvibe.recipe.v1"
 )
 
 type Manifest struct {
@@ -21,8 +24,19 @@ type Manifest struct {
 	Created       time.Time               `json:"created"`
 	Hostname      string                  `json:"hostname"`
 	Base          *BaseArchiveRef         `json:"base,omitempty"`
+	Recipe        *RecipeMetadata         `json:"recipe,omitempty"`
 	Tools         map[string]ToolManifest `json:"tools"`
 	Files         []FileManifest          `json:"files,omitempty"`
+}
+
+type RecipeMetadata struct {
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	Author      string   `json:"author,omitempty"`
+	Homepage    string   `json:"homepage,omitempty"`
+	Schema      string   `json:"schema"`
+	SharePolicy string   `json:"share_policy"`
+	SourceTools []string `json:"source_tools,omitempty"`
 }
 
 type BaseArchiveRef struct {
