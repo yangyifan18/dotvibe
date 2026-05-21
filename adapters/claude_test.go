@@ -78,6 +78,22 @@ func TestClaudeAdapter_ListRecipeFilesExcludesProjectMemory(t *testing.T) {
 	assertNotContainsPrefix(t, paths, "claude-code/transcripts/")
 }
 
+func TestClaudeAdapter_ListRecipeFilesExcludesPluginRuntimeData(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "plugin.json"), `{"name":"reviewer"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "data", "reviewer", "state.json"), `{"secret":"state"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "cache", "bundle.zip"), "cache")
+	writeTestFile(t, filepath.Join(home, ".claude", "plugins", "reviewer", "auth.json"), `{"token":"secret"}`)
+
+	adapter := &ClaudeAdapter{home: home}
+	paths := entryArchivePathsForTest(adapter.ListRecipeFiles(RecipeOpts{}))
+
+	assertContainsString(t, paths, "claude-code/plugins/reviewer/plugin.json")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/data/")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/reviewer/cache/")
+	assertNotContainsPrefix(t, paths, "claude-code/plugins/reviewer/auth.json")
+}
+
 func TestClaudeAdapter_Status(t *testing.T) {
 	a := &ClaudeAdapter{}
 	if !a.Detect() {

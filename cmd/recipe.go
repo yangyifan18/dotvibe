@@ -91,7 +91,11 @@ func collectRecipeEntries(all []adapters.Adapter, only []string, opts adapters.R
 		if !adapter.Detect() {
 			continue
 		}
-		entries = append(entries, adapter.ListRecipeFiles(opts)...)
+		for _, entry := range adapter.ListRecipeFiles(opts) {
+			if isExportableFile(entry.SourcePath) {
+				entries = append(entries, entry)
+			}
+		}
 	}
 	return entries
 }

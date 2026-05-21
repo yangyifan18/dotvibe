@@ -157,8 +157,32 @@ func (a *ClaudeAdapter) ListRecipeFiles(opts RecipeOpts) []FileEntry {
 	entries = append(entries, a.walkDir(filepath.Join(base, "skills"), "claude-code/skills", CategorySkills)...)
 	entries = append(entries, a.walkDir(filepath.Join(base, "agents"), "claude-code/agents", CategoryAgents)...)
 	entries = append(entries, a.walkDir(filepath.Join(base, "commands"), "claude-code/commands", CategoryCommands)...)
-	entries = append(entries, a.walkDir(filepath.Join(base, "plugins"), "claude-code/plugins", CategorySkills)...)
+	for _, entry := range a.walkDir(filepath.Join(base, "plugins"), "claude-code/plugins", CategorySkills) {
+		if isClaudeRecipePluginEntry(entry) {
+			entries = append(entries, entry)
+		}
+	}
 	return entries
+}
+
+func isClaudeRecipePluginEntry(entry FileEntry) bool {
+	lower := strings.ToLower(entry.InArchive)
+	if strings.HasPrefix(lower, "claude-code/plugins/data/") {
+		return false
+	}
+	blockedFragments := []string{"/cache/", "/artifacts/", "/node_modules/"}
+	for _, fragment := range blockedFragments {
+		if strings.Contains(lower, fragment) {
+			return false
+		}
+	}
+	blockedNames := []string{"auth.json", "credentials.json", "token.json", ".env"}
+	for _, name := range blockedNames {
+		if strings.HasSuffix(lower, "/"+name) {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *ClaudeAdapter) walkDir(dir, archivePrefix, category string) []FileEntry {
