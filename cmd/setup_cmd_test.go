@@ -56,6 +56,15 @@ func TestFormatSetupPlanShowsMissingInstallCommands(t *testing.T) {
 }
 
 func TestBuildInstallCommandPlanSkipsUnsafeByDefault(t *testing.T) {
+	oldLookPath := setupLookPath
+	setupLookPath = func(file string) (string, error) {
+		if file == "brew" {
+			return "/opt/homebrew/bin/brew", nil
+		}
+		return "", errors.New("not found")
+	}
+	t.Cleanup(func() { setupLookPath = oldLookPath })
+
 	results := []bootstrap.ToolCheckResult{
 		{
 			ID:        "claude-code",
@@ -83,6 +92,33 @@ func TestBuildInstallCommandPlanSkipsUnsafeByDefault(t *testing.T) {
 	commands := buildInstallCommandPlan(results)
 	if len(commands) != 1 || commands[0].Manager != "brew" {
 		t.Fatalf("expected safe structured brew command, got %#v", commands)
+	}
+}
+
+func TestBuildInstallCommandPlanUsesAvailableFallback(t *testing.T) {
+	oldLookPath := setupLookPath
+	setupLookPath = func(file string) (string, error) {
+		if file == "npm" {
+			return "/usr/local/bin/npm", nil
+		}
+		return "", errors.New("not found")
+	}
+	t.Cleanup(func() { setupLookPath = oldLookPath })
+
+	results := []bootstrap.ToolCheckResult{{
+		ID:        "opencode",
+		Name:      "OpenCode",
+		Installed: false,
+		InstallCommands: []bootstrap.InstallCommand{
+			{Manager: "brew", Command: "brew install anomalyco/tap/opencode", SafeRun: true, Executable: "brew", Args: []string{"install", "anomalyco/tap/opencode"}},
+			{Manager: "npm", Command: "npm i -g opencode-ai", SafeRun: true, Executable: "npm", Args: []string{"i", "-g", "opencode-ai"}},
+			{Manager: "curl", Command: "curl -fsSL https://opencode.ai/install | bash", SafeRun: false, ManualOnly: true, UsesShell: true},
+		},
+	}}
+
+	commands := buildInstallCommandPlan(results)
+	if len(commands) != 1 || commands[0].Manager != "npm" {
+		t.Fatalf("expected npm fallback when brew is unavailable, got %#v", commands)
 	}
 }
 

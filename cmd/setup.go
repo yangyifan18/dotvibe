@@ -23,7 +23,8 @@ var (
 	detectSetupTools = func() []bootstrap.ToolCheckResult {
 		return bootstrap.DetectTools(bootstrap.DefaultToolSpecs())
 	}
-	setupRestore = runSetupRestore
+	setupRestore  = runSetupRestore
+	setupLookPath = exec.LookPath
 )
 
 var setupCmd = &cobra.Command{
@@ -110,13 +111,21 @@ func buildInstallCommandPlan(results []bootstrap.ToolCheckResult) []bootstrap.In
 			continue
 		}
 		for _, installCommand := range result.InstallCommands {
-			if isAutoRunnableInstallCommand(installCommand) {
+			if isAvailableAutoInstallCommand(installCommand) {
 				commands = append(commands, installCommand)
 				break
 			}
 		}
 	}
 	return commands
+}
+
+func isAvailableAutoInstallCommand(installCommand bootstrap.InstallCommand) bool {
+	if !isAutoRunnableInstallCommand(installCommand) {
+		return false
+	}
+	_, err := setupLookPath(installCommand.Executable)
+	return err == nil
 }
 
 func isAutoRunnableInstallCommand(installCommand bootstrap.InstallCommand) bool {
