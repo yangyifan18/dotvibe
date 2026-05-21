@@ -41,6 +41,16 @@ func BuildIncrementalArchivePlan(manifest *Manifest, entries []adapters.FileEntr
 	return buildArchivePlan(manifest, entries, base)
 }
 
+func BuildRecipeArchivePlan(manifest *Manifest, entries []adapters.FileEntry) (ArchivePlan, error) {
+	if manifest == nil {
+		return ArchivePlan{}, fmt.Errorf("manifest is nil")
+	}
+	manifest.FormatVersion = 2
+	manifest.ArchiveKind = ArchiveKindRecipe
+	manifest.Base = nil
+	return buildArchivePlan(manifest, entries, nil)
+}
+
 func buildArchivePlan(manifest *Manifest, entries []adapters.FileEntry, base *Manifest) (ArchivePlan, error) {
 	baseByPath := map[string]FileManifest{}
 	if base != nil {
