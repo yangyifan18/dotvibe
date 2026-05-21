@@ -30,6 +30,11 @@ func (a *ClaudeAdapter) Detect() bool {
 	a.ensureHome()
 	paths := []string{
 		filepath.Join(a.home, ".claude", "settings.json"),
+		filepath.Join(a.home, ".claude", "CLAUDE.md"),
+		filepath.Join(a.home, ".claude", "skills"),
+		filepath.Join(a.home, ".claude", "agents"),
+		filepath.Join(a.home, ".claude", "commands"),
+		filepath.Join(a.home, ".claude", "plugins"),
 		filepath.Join(a.home, ".claude", "projects"),
 	}
 	for _, path := range paths {

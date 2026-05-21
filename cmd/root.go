@@ -22,6 +22,8 @@ Common commands:
   dotvibe list <archive>      Show backup contents
   dotvibe diff <a> <b>        Compare two backups
   dotvibe import <archive>    Restore from backup
+  dotvibe recipe export       Create a shareable .vibe recipe
+  dotvibe apply <recipe>      Apply a .vibe recipe
   dotvibe setup [archive]     Bootstrap tools and optionally restore`,
 }
 

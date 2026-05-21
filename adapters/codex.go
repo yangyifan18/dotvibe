@@ -30,7 +30,10 @@ func (a *CodexAdapter) Detect() bool {
 	a.ensureHome()
 	paths := []string{
 		filepath.Join(a.home, ".codex", "config.toml"),
+		filepath.Join(a.home, ".codex", "AGENTS.md"),
+		filepath.Join(a.home, ".codex", "CODEX.md"),
 		filepath.Join(a.home, ".codex", "agents"),
+		filepath.Join(a.home, ".codex", "skills"),
 	}
 	for _, path := range paths {
 		if _, err := os.Stat(path); err == nil {
