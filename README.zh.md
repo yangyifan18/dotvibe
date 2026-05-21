@@ -126,17 +126,31 @@ Recipe 用来把一套 vibe coding 配置分享给同事或社区。它会剥离
 # 导出 recipe
 dotvibe recipe export --name "YYF Vibe Stack" --author "yangyifan" -o yyf.vibe
 
-# 应用前预览
-dotvibe apply yyf.vibe --dry-run
+# 分享或应用前先 inspect / lint
+dotvibe recipe inspect yyf.vibe
+dotvibe recipe lint yyf.vibe --strict
 
-# 应用缺失文件，遇到冲突默认跳过
-dotvibe apply yyf.vibe --yes
+# 比较两个 recipe
+dotvibe recipe diff old.vibe new.vibe
+dotvibe recipe diff old.vibe new.vibe --content
 
-# 明确覆盖冲突
-dotvibe apply yyf.vibe --force --yes
+# 带 lint gate 和冲突处理地安全应用
+dotvibe recipe apply yyf.vibe --dry-run
+dotvibe recipe apply yyf.vibe
+
+# 非交互模式
+dotvibe recipe apply yyf.vibe --yes              # 跳过冲突
+dotvibe recipe apply yyf.vibe --force --yes      # 覆盖冲突
+dotvibe recipe apply yyf.vibe --allow-risk       # lint error 仍继续
+
+# 回滚一次 recipe apply
+dotvibe rollback list
+dotvibe rollback 20260521-143012-a1b2c3
+dotvibe rollback 20260521-143012-a1b2c3 --path ~/.codex/agents/reviewer.md
+dotvibe rollback prune --keep 20 --dry-run
 ```
 
-Recipe 不包含 Claude 项目 memory、transcripts、Codex sessions、auth 文件、telemetry 或 cache 数据。
+Recipe 不包含 Claude 项目 memory、transcripts、Codex sessions、auth 文件、telemetry 或 cache 数据。`recipe apply` 会先运行 lint，并为 write / overwrite 记录 rollback。
 
 ## 备份范围
 

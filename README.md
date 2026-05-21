@@ -140,17 +140,31 @@ Recipes are for sharing a setup with teammates or the community. They strip pers
 # Export a recipe
 dotvibe recipe export --name "YYF Vibe Stack" --author "yangyifan" -o yyf.vibe
 
-# Preview before applying
-dotvibe apply yyf.vibe --dry-run
+# Inspect and lint before sharing or applying
+dotvibe recipe inspect yyf.vibe
+dotvibe recipe lint yyf.vibe --strict
 
-# Apply missing files, skipping conflicts
-dotvibe apply yyf.vibe --yes
+# Compare two recipes
+dotvibe recipe diff old.vibe new.vibe
+dotvibe recipe diff old.vibe new.vibe --content
 
-# Intentionally overwrite conflicts
-dotvibe apply yyf.vibe --force --yes
+# Apply safely with lint + conflict handling
+dotvibe recipe apply yyf.vibe --dry-run
+dotvibe recipe apply yyf.vibe
+
+# Non-interactive modes
+dotvibe recipe apply yyf.vibe --yes              # skip conflicts
+dotvibe recipe apply yyf.vibe --force --yes      # overwrite conflicts
+dotvibe recipe apply yyf.vibe --allow-risk       # continue despite lint errors
+
+# Roll back a recipe apply transaction
+dotvibe rollback list
+dotvibe rollback 20260521-143012-a1b2c3
+dotvibe rollback 20260521-143012-a1b2c3 --path ~/.codex/agents/reviewer.md
+dotvibe rollback prune --keep 20 --dry-run
 ```
 
-Recipes do not include Claude project memory, transcripts, Codex sessions, auth files, telemetry, or cache data.
+Recipes do not include Claude project memory, transcripts, Codex sessions, auth files, telemetry, or cache data. `recipe apply` runs lint first and stores rollback records for writes and overwrites.
 
 ## What Gets Backed Up
 
