@@ -3,7 +3,6 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/adapters"
@@ -18,57 +17,13 @@ var (
 )
 
 var applyCmd = &cobra.Command{
-	Use:   "apply <recipe.vibe>",
-	Short: "Apply a shareable .vibe recipe",
-	Args:  cobra.ExactArgs(1),
+	Use:        "apply <recipe.vibe>",
+	Short:      "Apply a shareable .vibe recipe (deprecated; use dotvibe recipe apply)",
+	Deprecated: "use dotvibe recipe apply",
+	Args:       cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ar, err := readRecipeArchive(args[0])
-		if err != nil {
-			return err
-		}
-		defer ar.Close()
-
-		toolFiles := groupRecipeManifestFiles(ar.Manifest.Files)
-		if applyOnly != "" {
-			toolFiles = filterApplyTools(toolFiles, splitAndTrim(applyOnly))
-		}
-		if countImportEntries(toolFiles) == 0 {
-			return fmt.Errorf("no recipe files match selected filters")
-		}
-
-		opts := adapters.RestoreOpts{Force: applyForce}
-		preview, err := buildApplyPreview(toolFiles, opts)
-		if err != nil {
-			return err
-		}
-		printRecipeSummary(ar.Manifest)
-		printRestorePreview(preview)
-		if applyDryRun {
-			fmt.Println("Dry run: recipe not applied.")
-			return nil
-		}
-
-		if !applyYes {
-			fmt.Print("\nApply recipe? [Y/n] ")
-			var answer string
-			fmt.Scanln(&answer)
-			if answer != "" && answer != "y" && answer != "Y" {
-				fmt.Println("Cancelled.")
-				return nil
-			}
-		}
-
-		tmpDir, err := os.MkdirTemp("", "dotvibe-apply-*")
-		if err != nil {
-			return err
-		}
-		defer os.RemoveAll(tmpDir)
-
-		selectedFiles := flattenImportFiles(toolFiles)
-		if err := backup.ExtractArchiveSetFiles(args[0], nil, tmpDir, selectedFiles); err != nil {
-			return fmt.Errorf("failed to extract recipe: %w", err)
-		}
-		return restoreGroupedFiles(toolFiles, tmpDir, opts)
+		fmt.Fprintln(cmd.ErrOrStderr(), "dotvibe apply is deprecated; use dotvibe recipe apply")
+		return runRecipeApply(args[0], recipeApplyOptions{Yes: applyYes, Force: applyForce, DryRun: applyDryRun, Only: applyOnly, ScanContent: true}, cmd.OutOrStdout())
 	},
 }
 

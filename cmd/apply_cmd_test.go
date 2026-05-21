@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,4 +58,34 @@ func testSetHome(t *testing.T, home string) func() {
 	old := os.Getenv("HOME")
 	t.Setenv("HOME", home)
 	return func() { os.Setenv("HOME", old) }
+}
+
+func TestRecipeApplyBlocksLintErrorsUnlessAllowRisk(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/leak.md": "sk-proj-abcdefghijklmnopqrstuvwxyz123456\n"})
+	var out bytes.Buffer
+	err := runRecipeApply(path, recipeApplyOptions{Yes: true, DryRun: true, AllowRisk: false, ScanContent: true}, &out)
+	if err == nil {
+		t.Fatal("expected lint error to block apply")
+	}
+	if err := runRecipeApply(path, recipeApplyOptions{Yes: true, DryRun: true, AllowRisk: true, ScanContent: true}, &out); err != nil {
+		t.Fatalf("allow-risk dry-run should continue: %v", err)
+	}
+}
+
+func TestRecipeApplyDryRunDoesNotCreateRollback(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	state := t.TempDir()
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/reviewer.md": "# Reviewer\n"})
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{Yes: true, DryRun: true, StateRoot: state, ScanContent: true}, &out); err != nil {
+		t.Fatalf("runRecipeApply dry-run: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(state, "rollbacks")); len(entries) != 0 {
+		t.Fatalf("dry-run created rollback entries: %#v", entries)
+	}
 }
