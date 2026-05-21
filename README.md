@@ -13,6 +13,8 @@
 
 <p align="center">
   <b>Migrate your vibe coding setup to a new Mac.</b>
+  <br/>
+  DotVibe understands AI coding agents — their memories, skills, prompts, project rules, and configs — not just dotfiles.
 </p>
 
 <p align="center">
@@ -35,6 +37,18 @@ You spent weeks tuning your AI coding agents — custom memory, project-specific
 macOS Migration Assistant transfers apps and settings, but not the nuanced per-project data your vibe coding workflow depends on. General dotfile managers (chezmoi, stow) don't understand these tools' internal structure.
 
 **dotvibe** does.
+
+## DotVibe vs dotfile managers
+
+| Feature | DotVibe | Mackup / chezmoi |
+|---|---|---|
+| Knows Claude Code project memory | Yes | No / manual |
+| Knows Codex agents | Yes | Manual paths |
+| Knows OpenCode config layout | Yes | Manual paths |
+| Selective restore by tool/project | Yes | Limited/manual |
+| Auth excluded by default | Yes | Depends on config |
+| Backup diff by agent/category | Yes | Generic file diff |
+| New Mac bootstrap | Yes | Partial/manual |
 
 | Feature | Description |
 |---|---|
