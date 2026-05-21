@@ -23,6 +23,11 @@ Common commands:
   dotvibe diff <a> <b>        Compare two backups
   dotvibe import <archive>    Restore from backup
   dotvibe recipe export       Create a shareable .vibe recipe
+  dotvibe recipe inspect      Inspect a .vibe recipe
+  dotvibe recipe lint         Lint a .vibe recipe
+  dotvibe recipe diff         Compare two .vibe recipes
+  dotvibe recipe apply        Apply a .vibe recipe
+  dotvibe rollback            List, run, or prune rollback transactions
   dotvibe apply <recipe>      Apply a .vibe recipe
   dotvibe setup [archive]     Bootstrap tools and optionally restore`,
 }

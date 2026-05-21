@@ -26,7 +26,7 @@ var (
 
 var recipeCmd = &cobra.Command{
 	Use:   "recipe",
-	Short: "Create and inspect shareable vibe recipes",
+	Short: "Create, inspect, lint, diff, and apply shareable vibe recipes",
 }
 
 var recipeExportCmd = &cobra.Command{
