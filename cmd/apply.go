@@ -151,6 +151,10 @@ func printRecipeSummary(m *backup.Manifest) {
 }
 
 func restoreGroupedFiles(toolFiles map[string][]adapters.FileEntry, archiveDir string, opts adapters.RestoreOpts) error {
+	return restoreGroupedFilesWithLabel(toolFiles, archiveDir, opts, "Applying", "apply")
+}
+
+func restoreGroupedFilesWithLabel(toolFiles map[string][]adapters.FileEntry, archiveDir string, opts adapters.RestoreOpts, label string, failureLabel string) error {
 	var total adapters.RestoreSummary
 	var errs []error
 	for _, adapter := range adapters.AllAdapters() {
@@ -159,7 +163,7 @@ func restoreGroupedFiles(toolFiles map[string][]adapters.FileEntry, archiveDir s
 			continue
 		}
 
-		fmt.Printf("Applying %s... ", adapter.Name())
+		fmt.Printf("%s %s... ", label, adapter.Name())
 		summary, err := adapter.RestoreFiles(entries, archiveDir, opts)
 		total.Written += summary.Written
 		total.Skipped += summary.Skipped
@@ -175,7 +179,7 @@ func restoreGroupedFiles(toolFiles map[string][]adapters.FileEntry, archiveDir s
 
 	fmt.Printf("Summary: written=%d skipped=%d overwritten=%d failed=%d\n", total.Written, total.Skipped, total.Overwritten, total.Failed)
 	if total.Failed > 0 || len(errs) > 0 {
-		return fmt.Errorf("apply failed: %w", errors.Join(errs...))
+		return fmt.Errorf("%s failed: %w", failureLabel, errors.Join(errs...))
 	}
 	return nil
 }
