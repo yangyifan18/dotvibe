@@ -51,3 +51,13 @@ func TestCodexAdapter_Status(t *testing.T) {
 		t.Errorf("Name = %q, want %q", s.Name, "Codex CLI")
 	}
 }
+
+func TestCodexAdapter_DetectsAgentsDirectoryWithoutConfig(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "agent")
+
+	a := &CodexAdapter{home: home}
+	if !a.Detect() {
+		t.Fatal("expected agents directory to detect Codex CLI data")
+	}
+}

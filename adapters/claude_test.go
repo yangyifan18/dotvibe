@@ -125,3 +125,28 @@ func TestClaudeAdapter_FilterRestoreEntriesAppliesProjectFilter(t *testing.T) {
 		t.Fatalf("unexpected filtered entries: %#v", filtered)
 	}
 }
+
+func TestClaudeAdapter_DetectsProjectMemoryWithoutSettings(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "projects", "demo", "MEMORY.md"), "memory")
+
+	a := &ClaudeAdapter{home: home}
+	if !a.Detect() {
+		t.Fatal("expected project memory directory to detect Claude Code data")
+	}
+}
+
+func TestClaudeAdapter_ListFilesIncludesProjectRootMemory(t *testing.T) {
+	home := t.TempDir()
+	memoryPath := filepath.Join(home, ".claude", "projects", "demo", "MEMORY.md")
+	writeTestFile(t, memoryPath, "memory")
+
+	a := &ClaudeAdapter{home: home}
+	files := a.ListFiles(ExportOpts{})
+	for _, file := range files {
+		if file.InArchive == "claude-code/projects/demo/MEMORY.md" && file.Category == CategoryMemory {
+			return
+		}
+	}
+	t.Fatalf("project root MEMORY.md not exported: %#v", files)
+}
