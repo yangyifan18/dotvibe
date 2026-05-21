@@ -95,6 +95,39 @@ func (a *CodexAdapter) ListFiles(opts ExportOpts) []FileEntry {
 	return entries
 }
 
+func (a *CodexAdapter) ListRecipeFiles(opts RecipeOpts) []FileEntry {
+	var entries []FileEntry
+	base := a.baseDir()
+
+	if opts.IncludeSettings {
+		config := filepath.Join(base, "config.toml")
+		if info, err := os.Stat(config); err == nil {
+			entries = append(entries, FileEntry{
+				SourcePath: config,
+				InArchive:  "codex-cli/config/config.toml",
+				Category:   CategorySettings,
+				Size:       info.Size(),
+			})
+		}
+	}
+
+	for _, name := range []string{"AGENTS.md", "CODEX.md"} {
+		path := filepath.Join(base, name)
+		if info, err := os.Stat(path); err == nil {
+			entries = append(entries, FileEntry{
+				SourcePath: path,
+				InArchive:  "codex-cli/rules/" + name,
+				Category:   CategoryRules,
+				Size:       info.Size(),
+			})
+		}
+	}
+
+	entries = append(entries, a.walkDir(filepath.Join(base, "agents"), "codex-cli/agents", CategoryAgents)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "skills"), "codex-cli/skills", CategorySkills)...)
+	return entries
+}
+
 func (a *CodexAdapter) walkDir(dir, archivePrefix, category string) []FileEntry {
 	var entries []FileEntry
 	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {

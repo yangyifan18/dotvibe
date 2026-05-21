@@ -85,6 +85,13 @@ func (a *OpenCodeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 	return entries
 }
 
+func (a *OpenCodeAdapter) ListRecipeFiles(opts RecipeOpts) []FileEntry {
+	if !opts.IncludeSettings {
+		return nil
+	}
+	return a.ListFiles(ExportOpts{})
+}
+
 func (a *OpenCodeAdapter) Status() ToolStatus {
 	s := ToolStatus{
 		Name: "OpenCode",

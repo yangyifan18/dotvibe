@@ -123,6 +123,39 @@ func (a *ClaudeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 	return entries
 }
 
+func (a *ClaudeAdapter) ListRecipeFiles(opts RecipeOpts) []FileEntry {
+	var entries []FileEntry
+	base := a.baseDir()
+
+	if opts.IncludeSettings {
+		settings := filepath.Join(base, "settings.json")
+		if info, err := os.Stat(settings); err == nil {
+			entries = append(entries, FileEntry{
+				SourcePath: settings,
+				InArchive:  "claude-code/config/settings.json",
+				Category:   CategorySettings,
+				Size:       info.Size(),
+			})
+		}
+	}
+
+	globalRule := filepath.Join(base, "CLAUDE.md")
+	if info, err := os.Stat(globalRule); err == nil {
+		entries = append(entries, FileEntry{
+			SourcePath: globalRule,
+			InArchive:  "claude-code/rules/CLAUDE.md",
+			Category:   CategoryRules,
+			Size:       info.Size(),
+		})
+	}
+
+	entries = append(entries, a.walkDir(filepath.Join(base, "skills"), "claude-code/skills", CategorySkills)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "agents"), "claude-code/agents", CategoryAgents)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "commands"), "claude-code/commands", CategoryCommands)...)
+	entries = append(entries, a.walkDir(filepath.Join(base, "plugins"), "claude-code/plugins", CategorySkills)...)
+	return entries
+}
+
 func (a *ClaudeAdapter) walkDir(dir, archivePrefix, category string) []FileEntry {
 	var entries []FileEntry
 

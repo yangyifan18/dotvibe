@@ -1,10 +1,14 @@
 package adapters
 
 const (
-	CategoryConfig  = "config"
-	CategoryMemory  = "memory"
-	CategorySkills  = "skills"
-	CategoryHistory = "history"
+	CategoryConfig   = "config"
+	CategoryMemory   = "memory"
+	CategorySkills   = "skills"
+	CategoryHistory  = "history"
+	CategorySettings = "settings"
+	CategoryRules    = "rules"
+	CategoryAgents   = "agents"
+	CategoryCommands = "commands"
 )
 
 type FileEntry struct {
@@ -22,6 +26,12 @@ const (
 
 type ExportOpts struct {
 	WithHistory     bool
+	ExcludePatterns []string
+	OnlyTools       []string
+}
+
+type RecipeOpts struct {
+	IncludeSettings bool
 	ExcludePatterns []string
 	OnlyTools       []string
 }
@@ -61,6 +71,7 @@ type Adapter interface {
 	ID() string
 	Detect() bool
 	ListFiles(opts ExportOpts) []FileEntry
+	ListRecipeFiles(opts RecipeOpts) []FileEntry
 	Status() ToolStatus
 	FilterRestoreEntries(entries []FileEntry, opts RestoreOpts) []FileEntry
 	PlanRestore(entries []FileEntry, opts RestoreOpts) ([]RestorePlanEntry, error)
