@@ -7,41 +7,51 @@ import (
 )
 
 func TestClaudeAdapter_Detect(t *testing.T) {
-	a := &ClaudeAdapter{}
+	tests := []struct {
+		name  string
+		setup func(string)
+		want  bool
+	}{
+		{
+			name: "settings file",
+			setup: func(home string) {
+				writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), "{}")
+			},
+			want: true,
+		},
+		{
+			name: "projects directory",
+			setup: func(home string) {
+				if err := os.MkdirAll(filepath.Join(home, ".claude", "projects"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: true,
+		},
+		{name: "empty home", setup: func(string) {}, want: false},
+	}
 
-	home, _ := os.UserHomeDir()
-	settingsPath := filepath.Join(home, ".claude", "settings.json")
-	_, err := os.Stat(settingsPath)
-	expected := err == nil
-
-	if got := a.Detect(); got != expected {
-		t.Errorf("Detect() = %v, want %v (settings.json exists: %v)", got, expected, err == nil)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			tt.setup(home)
+			a := &ClaudeAdapter{home: home}
+			if got := a.Detect(); got != tt.want {
+				t.Fatalf("Detect() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
 func TestClaudeAdapter_ListFiles(t *testing.T) {
-	a := &ClaudeAdapter{}
-	if !a.Detect() {
-		t.Skip("Claude Code not installed")
-	}
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "settings.json"), `{"theme":"test"}`)
+	writeTestFile(t, filepath.Join(home, ".claude", "projects", "demo", "MEMORY.md"), "memory")
 
+	a := &ClaudeAdapter{home: home}
 	files := a.ListFiles(ExportOpts{})
-	if len(files) == 0 {
-		t.Error("ListFiles returned empty — expected at least settings.json")
-	}
-
-	found := false
-	for _, f := range files {
-		if filepath.Base(f.InArchive) == "settings.json" {
-			found = true
-			if f.Category != CategoryConfig {
-				t.Errorf("settings.json category = %q, want %q", f.Category, CategoryConfig)
-			}
-		}
-	}
-	if !found {
-		t.Error("settings.json not found in file list")
-	}
+	assertArchiveEntry(t, files, "claude-code/config/settings.json", CategoryConfig)
+	assertArchiveEntry(t, files, "claude-code/projects/demo/MEMORY.md", CategoryMemory)
 }
 
 func TestClaudeAdapter_Status(t *testing.T) {
@@ -96,6 +106,19 @@ func TestClaudeAdapter_ProjectFilterKeepsOnlyRequestedProject(t *testing.T) {
 	}
 }
 
+func assertArchiveEntry(t *testing.T, files []FileEntry, path, category string) {
+	t.Helper()
+	for _, file := range files {
+		if file.InArchive == path {
+			if file.Category != category {
+				t.Fatalf("%s category = %q, want %q", path, file.Category, category)
+			}
+			return
+		}
+	}
+	t.Fatalf("archive entry %s not found in %#v", path, files)
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -124,4 +147,29 @@ func TestClaudeAdapter_FilterRestoreEntriesAppliesProjectFilter(t *testing.T) {
 	if len(filtered) != 1 || filtered[0].InArchive != entries[0].InArchive {
 		t.Fatalf("unexpected filtered entries: %#v", filtered)
 	}
+}
+
+func TestClaudeAdapter_DetectsProjectMemoryWithoutSettings(t *testing.T) {
+	home := t.TempDir()
+	writeTestFile(t, filepath.Join(home, ".claude", "projects", "demo", "MEMORY.md"), "memory")
+
+	a := &ClaudeAdapter{home: home}
+	if !a.Detect() {
+		t.Fatal("expected project memory directory to detect Claude Code data")
+	}
+}
+
+func TestClaudeAdapter_ListFilesIncludesProjectRootMemory(t *testing.T) {
+	home := t.TempDir()
+	memoryPath := filepath.Join(home, ".claude", "projects", "demo", "MEMORY.md")
+	writeTestFile(t, memoryPath, "memory")
+
+	a := &ClaudeAdapter{home: home}
+	files := a.ListFiles(ExportOpts{})
+	for _, file := range files {
+		if file.InArchive == "claude-code/projects/demo/MEMORY.md" && file.Category == CategoryMemory {
+			return
+		}
+	}
+	t.Fatalf("project root MEMORY.md not exported: %#v", files)
 }

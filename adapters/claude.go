@@ -28,8 +28,16 @@ func (a *ClaudeAdapter) ensureHome() {
 
 func (a *ClaudeAdapter) Detect() bool {
 	a.ensureHome()
-	_, err := os.Stat(filepath.Join(a.home, ".claude", "settings.json"))
-	return err == nil
+	paths := []string{
+		filepath.Join(a.home, ".claude", "settings.json"),
+		filepath.Join(a.home, ".claude", "projects"),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *ClaudeAdapter) baseDir() string {
@@ -65,6 +73,16 @@ func (a *ClaudeAdapter) ListFiles(opts ExportOpts) []FileEntry {
 			projectPrefix := "claude-code/projects/" + proj.Name()
 			memDir := filepath.Join(projectsDir, proj.Name(), "memory")
 			entries = append(entries, a.walkDir(memDir, projectPrefix+"/memory", CategoryMemory)...)
+
+			rootMemory := filepath.Join(projectsDir, proj.Name(), "MEMORY.md")
+			if info, err := os.Stat(rootMemory); err == nil {
+				entries = append(entries, FileEntry{
+					SourcePath: rootMemory,
+					InArchive:  projectPrefix + "/MEMORY.md",
+					Category:   CategoryMemory,
+					Size:       info.Size(),
+				})
+			}
 
 			claudeMd := filepath.Join(projectsDir, proj.Name(), "CLAUDE.md")
 			if info, err := os.Stat(claudeMd); err == nil {

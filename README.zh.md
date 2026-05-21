@@ -41,7 +41,8 @@ macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding �
 | `status` | 检测本机所有 vibe coding 工具 |
 | `export` | 把 config + memory + skills 打包成一个 `.tar.gz` |
 | `list` | 查看备份包里有什么 |
-| `diff` | 按路径和 checksum 比较两个备份包 |
+| `diff` | 按 manifest 路径、checksum、工具或分类比较两个备份包 |
+| `setup` | 在新 Mac 上检测/安装支持的 agent CLI，然后可选恢复备份 |
 | `import` | 选择性恢复 — 按工具、按项目、或全部 |
 
 **支持工具：** Claude Code &middot; Codex CLI &middot; OpenCode
@@ -93,8 +94,23 @@ dotvibe export --exclude "*/Research/*" --exclude "transcripts/*.jsonl"
 # 明确覆盖已有备份
 dotvibe export -o backup.tar.gz --force
 
+# 创建完整备份
+dotvibe export -o dotvibe-full.tar.gz
+
+# 基于旧备份创建增量备份
+dotvibe export --base dotvibe-full.tar.gz -o dotvibe-delta.tar.gz
+
+# 恢复增量备份链
+dotvibe import dotvibe-delta.tar.gz --base dotvibe-full.tar.gz --yes
+
 # 比较两个备份
 dotvibe diff old.tar.gz new.tar.gz
+
+# 查看两个备份之间的 Claude Code memory 变化
+dotvibe diff --only claude-code --category memory old.tar.gz new.tar.gz
+
+# 输出 JSON 供自动化使用
+dotvibe diff --json old.tar.gz new.tar.gz
 
 # 包含会话历史（默认不含）
 dotvibe export --with-history
@@ -111,6 +127,18 @@ dotvibe export --with-history
 | **历史** | 可选 | 会话、transcripts（`--with-history`） |
 | **缓存** | 否 | telemetry、cache、临时文件 |
 | **符号链接** | 否 | 跳过，避免跨机器恢复不安全链接 |
+
+## Setup 安全模型
+
+`dotvibe setup` 默认只预览，不会安装。它会打印已检测工具和安装命令。加 `--install` 后才会在确认后运行安全的包管理器命令；标记为 manual-review 的命令只展示，不自动执行。
+
+```bash
+# 预览已检测工具、安装命令和可选恢复计划
+dotvibe setup backup.tar.gz
+
+# 跳过确认，运行安全安装命令，然后恢复
+dotvibe setup backup.tar.gz --install --yes
+```
 
 ## 恢复安全
 

@@ -76,6 +76,69 @@ func TestManifestRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManifestV2MetadataJSON(t *testing.T) {
+	created := time.Date(2026, 5, 20, 8, 0, 0, 0, time.UTC)
+	m := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindIncremental,
+		Created:       created,
+		Hostname:      "new-mac",
+		Base: &BaseArchiveRef{
+			FileName:       "dotvibe-2026-05-19.tar.gz",
+			Created:        created.Add(-24 * time.Hour),
+			ManifestSHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+		Tools: map[string]ToolManifest{
+			"claude-code": {Included: []string{"memory"}, FileCount: 1},
+		},
+		Files: []FileManifest{
+			{
+				Path:       "claude-code/memory/project/MEMORY.md",
+				ToolID:     "claude-code",
+				Size:       7,
+				SHA256:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+				Category:   "memory",
+				Storage:    FileStorageBase,
+				StoredPath: "",
+			},
+		},
+	}
+
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var got Manifest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.FormatVersion != 2 || got.ArchiveKind != ArchiveKindIncremental {
+		t.Fatalf("unexpected metadata: %#v", got)
+	}
+	if got.Base == nil || got.Base.ManifestSHA256 != m.Base.ManifestSHA256 {
+		t.Fatalf("base ref not preserved: %#v", got.Base)
+	}
+	if got.Files[0].Storage != FileStorageBase || got.Files[0].ToolID != "claude-code" {
+		t.Fatalf("file storage metadata not preserved: %#v", got.Files[0])
+	}
+}
+
+func TestLegacyManifestDefaultsToFullArchive(t *testing.T) {
+	var m Manifest
+	data := []byte(`{"version":"1.0.0","tools":{},"files":[{"path":"tool/config.json","size":2,"sha256":"abc","category":"config"}]}`)
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatalf("Unmarshal legacy manifest: %v", err)
+	}
+	m.Normalize()
+	if m.FormatVersion != 1 || m.ArchiveKind != ArchiveKindFull {
+		t.Fatalf("legacy defaults = (%d,%q), want (1,%q)", m.FormatVersion, m.ArchiveKind, ArchiveKindFull)
+	}
+	if m.Files[0].Storage != FileStorageInline || m.Files[0].StoredPath != m.Files[0].Path {
+		t.Fatalf("legacy file storage = %#v", m.Files[0])
+	}
+}
+
 func TestReadManifest_MissingFile(t *testing.T) {
 	_, err := ReadManifest("/nonexistent/manifest.json")
 	if err == nil {

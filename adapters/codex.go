@@ -28,8 +28,16 @@ func (a *CodexAdapter) ID() string   { return "codex-cli" }
 
 func (a *CodexAdapter) Detect() bool {
 	a.ensureHome()
-	_, err := os.Stat(filepath.Join(a.home, ".codex", "config.toml"))
-	return err == nil
+	paths := []string{
+		filepath.Join(a.home, ".codex", "config.toml"),
+		filepath.Join(a.home, ".codex", "agents"),
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *CodexAdapter) baseDir() string {
