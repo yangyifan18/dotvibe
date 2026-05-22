@@ -69,3 +69,22 @@ func fileSHAForCmdTest(t *testing.T, path string) string {
 	sum := sha256.Sum256(data)
 	return fmt.Sprintf("%x", sum)
 }
+
+func TestRunRollbackBeforeMissingAllowsAlreadyDeletedTarget(t *testing.T) {
+	state := t.TempDir()
+	store := rollback.NewStore(state)
+	target := filepath.Join(t.TempDir(), "new.md")
+	writeFileForImportTest(t, target, "new\n")
+	after := fileSHAForCmdTest(t, target)
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	record := rollback.RollbackRecord{ID: "apply1", Operation: rollback.OperationRecipeApply, Created: time.Now(), Entries: []rollback.RollbackEntry{{LogicalPath: "codex-cli/agents/new.md", TargetPath: target, Action: rollback.ActionWrite, Status: rollback.StatusApplied, BeforeState: rollback.BeforeMissing, AfterSHA256: after}}}
+	if err := store.Save(record); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runRollback("apply1", rollbackRunOptions{StateRoot: state, Yes: true}, &out); err != nil {
+		t.Fatalf("already deleted target should be treated as rolled back: %v", err)
+	}
+}

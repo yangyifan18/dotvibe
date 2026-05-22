@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yangyifan18/dotvibe/adapters"
@@ -136,5 +137,26 @@ func TestRecipeApplyForceOverwriteStoresBeforeBlob(t *testing.T) {
 	data, _ := os.ReadFile(target)
 	if string(data) != "recipe\n" {
 		t.Fatalf("target = %q", string(data))
+	}
+}
+
+func TestRecipeApplyPromptsWhenYesIsNotSet(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	state := t.TempDir()
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/reviewer.md": "# Reviewer\n"})
+	oldInput := recipeApplyInput
+	recipeApplyInput = strings.NewReader("n\n")
+	defer func() { recipeApplyInput = oldInput }()
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{StateRoot: state, ScanContent: true}, &out); err == nil {
+		t.Fatal("expected cancelled apply to return an error")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "agents", "reviewer.md")); !os.IsNotExist(err) {
+		t.Fatalf("apply wrote target despite cancellation: %v", err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(state, "rollbacks")); len(entries) != 0 {
+		t.Fatalf("cancelled apply created rollback entries: %#v", entries)
 	}
 }

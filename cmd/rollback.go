@@ -132,7 +132,11 @@ func rollbackOne(store rollback.Store, record rollback.RollbackRecord, entry rol
 		}
 	}
 	if entry.BeforeState == rollback.BeforeMissing {
-		return os.Remove(entry.TargetPath)
+		err := os.Remove(entry.TargetPath)
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
 	}
 	blobPath := filepath.Join(store.RecordDir(record.ID), entry.BeforeBlob)
 	data, err := os.ReadFile(blobPath)

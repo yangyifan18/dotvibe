@@ -28,6 +28,7 @@ type recipeApplyOptions struct {
 }
 
 var recipeApplyOpts = recipeApplyOptions{ScanContent: true}
+var recipeApplyInput io.Reader = os.Stdin
 
 var recipeApplyCmd = &cobra.Command{
 	Use:   "apply <recipe.vibe>",
@@ -81,6 +82,15 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 		fmt.Fprintln(w, "Dry run: recipe not applied.")
 		return nil
 	}
+	if !opts.Yes {
+		ok, err := confirmRecipeApply(recipeApplyInput, w)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("apply cancelled")
+		}
+	}
 	applyID := fmt.Sprintf("%s-%s", time.Now().Format("20060102-150405"), shortRandomID())
 	tmpDir, err := os.MkdirTemp("", "dotvibe-apply-*")
 	if err != nil {
@@ -101,7 +111,7 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 	if opts.Yes {
 		resolved = recipe.ResolveNonInteractiveConflicts(plan.Entries, recipe.ConflictOptions{Yes: opts.Yes, Force: opts.Force})
 	} else {
-		resolved, err = resolveInteractiveConflicts(plan.Entries, os.Stdin, w)
+		resolved, err = resolveInteractiveConflicts(plan.Entries, recipeApplyInput, w)
 		if err != nil {
 			return err
 		}
@@ -117,6 +127,16 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 	printRecipeApplySummary(w, summary)
 	fmt.Fprintf(w, "Apply ID: %s\n", applyID)
 	return err
+}
+
+func confirmRecipeApply(r io.Reader, w io.Writer) (bool, error) {
+	fmt.Fprint(w, "\nApply recipe? [y/N] ")
+	line, err := bufio.NewReader(r).ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes", nil
 }
 
 func printLintSummary(w io.Writer, result recipe.LintResult) {
