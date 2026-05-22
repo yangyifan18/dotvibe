@@ -56,6 +56,77 @@ func TestLintArchiveNoContentSkipsSecretContent(t *testing.T) {
 	}
 }
 
+func TestLintArchiveScansLargeTextPrefixForSecrets(t *testing.T) {
+	meta := validRecipeMetadata("Large Leaky")
+	meta.Author = "yangyifan"
+	meta.Description = "large file"
+	archivePath := buildRecipeArchiveWithMetadata(t, map[string]testRecipeFile{
+		"codex-cli/agents/large.md": {
+			content:  "sk-proj-" + strings.Repeat("a", 64) + "\n" + strings.Repeat("x", RecipeTextDiffMaxBytes+1),
+			category: adapters.CategoryAgents,
+		},
+	}, meta)
+
+	result, err := LintArchive(archivePath, LintOptions{ScanContent: true})
+	if err != nil {
+		t.Fatalf("LintArchive: %v", err)
+	}
+	assertFinding(t, result.Findings, SeverityError, "openai_key")
+	assertFinding(t, result.Findings, SeverityWarning, "large_file")
+}
+
+func TestLintArchiveFlagsSensitiveCategoriesPathsAndCredentialNames(t *testing.T) {
+	meta := validRecipeMetadata("Sensitive")
+	meta.Author = "yangyifan"
+	meta.Description = "sensitive samples"
+	archivePath := buildRecipeArchiveWithMetadata(t, map[string]testRecipeFile{
+		"codex-cli/agents/shared.md":     {content: "memory\n", category: adapters.CategoryMemory},
+		"opencode/history/session.jsonl": {content: "history\n", category: adapters.CategoryAgents},
+		"custom-tool/project/notes.md":   {content: "project\n", category: adapters.CategoryAgents},
+		"codex-cli/config/tokens.json":   {content: "{}\n", category: adapters.CategoryConfig},
+		"codex-cli/config/id_ed25519":    {content: "not-secret\n", category: adapters.CategoryConfig},
+		"claude-code/config/client.pem":  {content: "not-secret\n", category: adapters.CategoryConfig},
+		"claude-code/history.jsonl":      {content: "history\n", category: adapters.CategoryConfig},
+		"codex-cli/.cache/index.json":    {content: "{}\n", category: adapters.CategoryConfig},
+		"opencode/telemetry.json":        {content: "{}\n", category: adapters.CategoryConfig},
+	}, meta)
+
+	result, err := LintArchive(archivePath, LintOptions{ScanContent: false})
+	if err != nil {
+		t.Fatalf("LintArchive: %v", err)
+	}
+	assertFinding(t, result.Findings, SeverityError, "sensitive_category")
+	assertFinding(t, result.Findings, SeverityError, "history_path")
+	assertFinding(t, result.Findings, SeverityError, "project_path")
+	assertFinding(t, result.Findings, SeverityError, "cache_path")
+	assertFinding(t, result.Findings, SeverityError, "telemetry_path")
+	assertFinding(t, result.Findings, SeverityError, "credential_filename")
+}
+
+func TestLintArchiveJSONUsesEmptyFindingsArray(t *testing.T) {
+	meta := validRecipeMetadata("Clean")
+	meta.Author = "yangyifan"
+	meta.Description = "clean recipe"
+	archivePath := buildRecipeArchiveWithMetadata(t, map[string]testRecipeFile{
+		"codex-cli/agents/safe.md": {content: "safe\n", category: adapters.CategoryAgents},
+	}, meta)
+
+	result, err := LintArchive(archivePath, LintOptions{ScanContent: true})
+	if err != nil {
+		t.Fatalf("LintArchive: %v", err)
+	}
+	if len(result.Findings) != 0 || result.Findings == nil {
+		t.Fatalf("findings = %#v, want non-nil empty slice", result.Findings)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal LintResult: %v", err)
+	}
+	if !strings.Contains(string(data), `"findings":[]`) {
+		t.Fatalf("findings should marshal as [], got %s", string(data))
+	}
+}
+
 func TestLintArchiveFlagsUnsafeManifestPaths(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "unsafe.vibe")
 	if err := createRawRecipeArchiveForLintTest(archivePath, "../secret.txt", "secret"); err != nil {

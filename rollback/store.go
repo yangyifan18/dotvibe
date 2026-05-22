@@ -74,14 +74,36 @@ func (s Store) Save(record RollbackRecord) error {
 	if record.ID == "" {
 		return fmt.Errorf("rollback record id is empty")
 	}
-	if err := os.MkdirAll(s.RecordDir(record.ID), 0755); err != nil {
+	recordDir := s.RecordDir(record.ID)
+	if err := os.MkdirAll(recordDir, 0755); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.RecordPath(record.ID), data, 0644)
+	tmp, err := os.CreateTemp(recordDir, ".rollback-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.RecordPath(record.ID))
 }
 
 func (s Store) Load(id string) (RollbackRecord, error) {

@@ -33,6 +33,21 @@ func TestRunRecipeLintJSON(t *testing.T) {
 	}
 }
 
+func TestRunRecipeLintStrictAndNoContent(t *testing.T) {
+	warningOnly := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/contact.md": "owner@example.com\n"})
+	if err := runRecipeLint(warningOnly, recipeLintOptions{Strict: false, ScanContent: true}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("warning-only lint should pass without strict: %v", err)
+	}
+	if err := runRecipeLint(warningOnly, recipeLintOptions{Strict: true, ScanContent: true}, &bytes.Buffer{}); err == nil {
+		t.Fatal("strict lint should fail on warning")
+	}
+
+	secret := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/leak.md": "sk-proj-abcdefghijklmnopqrstuvwxyz123456\n"})
+	if err := runRecipeLint(secret, recipeLintOptions{ScanContent: false}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("no-content lint should skip content secret: %v", err)
+	}
+}
+
 func buildRecipeCommandFixture(t *testing.T, files map[string]string) string {
 	t.Helper()
 	src := t.TempDir()

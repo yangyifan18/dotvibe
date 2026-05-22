@@ -60,6 +60,24 @@ func TestRunRollbackRefusesChangedTargetWithoutForce(t *testing.T) {
 	}
 }
 
+func TestRunRollbackForceAllowsChangedNewFileTarget(t *testing.T) {
+	state := t.TempDir()
+	store := rollback.NewStore(state)
+	target := filepath.Join(t.TempDir(), "file.md")
+	writeFileForImportTest(t, target, "changed-after-apply\n")
+	record := rollback.RollbackRecord{ID: "apply1", Operation: rollback.OperationRecipeApply, Created: time.Now(), Entries: []rollback.RollbackEntry{{LogicalPath: "codex-cli/agents/file.md", TargetPath: target, Action: rollback.ActionWrite, Status: rollback.StatusApplied, BeforeState: rollback.BeforeMissing, AfterSHA256: strings.Repeat("0", 64)}}}
+	if err := store.Save(record); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runRollback("apply1", rollbackRunOptions{StateRoot: state, Yes: true, Force: true}, &out); err != nil {
+		t.Fatalf("force rollback should remove changed new-file target: %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("force rollback should delete target, stat err=%v", err)
+	}
+}
+
 func fileSHAForCmdTest(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -86,5 +104,83 @@ func TestRunRollbackBeforeMissingAllowsAlreadyDeletedTarget(t *testing.T) {
 	var out bytes.Buffer
 	if err := runRollback("apply1", rollbackRunOptions{StateRoot: state, Yes: true}, &out); err != nil {
 		t.Fatalf("already deleted target should be treated as rolled back: %v", err)
+	}
+}
+
+func TestRunRollbackRefusesDeletedOverwriteTargetWithoutForce(t *testing.T) {
+	state := t.TempDir()
+	store := rollback.NewStore(state)
+	target := filepath.Join(t.TempDir(), "existing.md")
+	writeFileForImportTest(t, target, "after\n")
+	after := fileSHAForCmdTest(t, target)
+	oldSHA, oldBlob, err := rollback.WriteBlob(store.RecordDir("apply1"), []byte("before\n"))
+	if err != nil {
+		t.Fatalf("WriteBlob: %v", err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	record := rollback.RollbackRecord{ID: "apply1", Operation: rollback.OperationRecipeApply, Created: time.Now(), Entries: []rollback.RollbackEntry{{LogicalPath: "codex-cli/agents/existing.md", TargetPath: target, Action: rollback.ActionOverwrite, Status: rollback.StatusApplied, BeforeState: rollback.BeforeFile, BeforeSHA256: oldSHA, BeforeBlob: oldBlob, AfterSHA256: after}}}
+	if err := store.Save(record); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runRollback("apply1", rollbackRunOptions{StateRoot: state, Yes: true}, &out); err == nil {
+		t.Fatal("expected deleted overwrite target to be refused")
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("refused rollback should not restore deleted target, stat err=%v", err)
+	}
+}
+
+func TestRunRollbackVerifiesBeforeBlobSHA(t *testing.T) {
+	state := t.TempDir()
+	store := rollback.NewStore(state)
+	target := filepath.Join(t.TempDir(), "existing.md")
+	writeFileForImportTest(t, target, "after\n")
+	_, oldBlob, err := rollback.WriteBlob(store.RecordDir("apply1"), []byte("before\n"))
+	if err != nil {
+		t.Fatalf("WriteBlob: %v", err)
+	}
+	record := rollback.RollbackRecord{ID: "apply1", Operation: rollback.OperationRecipeApply, Created: time.Now(), Entries: []rollback.RollbackEntry{{LogicalPath: "codex-cli/agents/existing.md", TargetPath: target, Action: rollback.ActionOverwrite, Status: rollback.StatusApplied, BeforeState: rollback.BeforeFile, BeforeSHA256: strings.Repeat("0", 64), BeforeBlob: oldBlob, AfterSHA256: fileSHAForCmdTest(t, target)}}}
+	if err := store.Save(record); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runRollback("apply1", rollbackRunOptions{StateRoot: state, Yes: true, Force: true}, &out); err == nil {
+		t.Fatal("expected before blob hash mismatch to be refused")
+	}
+	data, _ := os.ReadFile(target)
+	if string(data) != "after\n" {
+		t.Fatalf("hash mismatch should leave target unchanged, got %q", string(data))
+	}
+}
+
+func TestRunRollbackListShowsDigestAndCounts(t *testing.T) {
+	state := t.TempDir()
+	store := rollback.NewStore(state)
+	record := rollback.RollbackRecord{
+		ID:           "apply1",
+		Operation:    rollback.OperationRecipeApply,
+		Created:      time.Now(),
+		RecipeName:   "Recipe",
+		RecipeDigest: strings.Repeat("a", 64),
+		Entries: []rollback.RollbackEntry{
+			{Action: rollback.ActionWrite, Status: rollback.StatusApplied},
+			{Action: rollback.ActionOverwrite, Status: rollback.StatusFailed},
+		},
+	}
+	if err := store.Save(record); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	var out bytes.Buffer
+	if err := runRollbackList(state, &out); err != nil {
+		t.Fatalf("runRollbackList: %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{"digest=aaaaaaaaaaaa", "actions=write=1,overwrite=1", "statuses=applied=1,failed=1"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("rollback list output missing %q:\n%s", want, output)
+		}
 	}
 }

@@ -26,7 +26,7 @@ type RecipeInfo struct {
 	TotalSize   int64            `json:"total_size"`
 	Tools       []ToolSummary    `json:"tools"`
 	Files       []RecipeFileInfo `json:"files"`
-	Risks       []LintFinding    `json:"risks,omitempty"`
+	Risks       []LintFinding    `json:"risks"`
 }
 
 type ToolSummary struct {
@@ -63,8 +63,8 @@ func AnalyzeArchive(path string, opts AnalyzeOptions) (RecipeInfo, error) {
 		return RecipeInfo{}, fmt.Errorf("read recipe: %w", err)
 	}
 	defer ar.Close()
-	if ar.Manifest.ArchiveKind != backup.ArchiveKindRecipe || ar.Manifest.Recipe == nil {
-		return RecipeInfo{}, fmt.Errorf("archive is not a dotvibe recipe")
+	if err := validateRecipeManifest(ar.Manifest); err != nil {
+		return RecipeInfo{}, err
 	}
 	info, err := buildRecipeInfo(path, ar.Manifest)
 	if err != nil {
@@ -117,6 +117,7 @@ func buildRecipeInfo(path string, manifest *backup.Manifest) (RecipeInfo, error)
 		TotalSize:   size,
 		Tools:       tools,
 		Files:       files,
+		Risks:       []LintFinding{},
 	}, nil
 }
 

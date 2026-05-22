@@ -59,7 +59,7 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | `setup` | Bootstrap supported agent CLIs on a new Mac, then optionally restore |
 | `import` | Restore selectively — by tool, by project, or everything |
 | `recipe export` | Create a shareable `.vibe` recipe with skills, agents, global rules, and safe settings |
-| `apply` | Apply a `.vibe` recipe without needing a full backup |
+| `recipe apply` | Apply a `.vibe` recipe without needing a full backup |
 
 **Supported tools:** Claude Code &middot; Codex CLI &middot; OpenCode
 
@@ -164,7 +164,7 @@ dotvibe rollback 20260521-143012-a1b2c3 --path ~/.codex/agents/reviewer.md
 dotvibe rollback prune --keep 20 --dry-run
 ```
 
-Recipes do not include Claude project memory, transcripts, Codex sessions, auth files, telemetry, or cache data. `recipe apply` runs lint first and stores rollback records for writes and overwrites.
+Recipes do not include Claude project memory, transcripts, Codex sessions, auth files, telemetry, or cache data. `recipe apply` runs lint first and stores rollback records for writes and overwrites. The top-level `dotvibe apply` command remains as a deprecated compatibility alias.
 
 ## What Gets Backed Up
 

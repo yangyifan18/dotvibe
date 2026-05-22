@@ -46,8 +46,11 @@ func DiffArchives(leftPath, rightPath string, opts DiffOptions) (RecipeDiff, err
 		return RecipeDiff{}, fmt.Errorf("read right recipe: %w", err)
 	}
 	defer right.Close()
-	if left.Manifest.ArchiveKind != backup.ArchiveKindRecipe || right.Manifest.ArchiveKind != backup.ArchiveKindRecipe {
-		return RecipeDiff{}, fmt.Errorf("both archives must be dotvibe recipes")
+	if err := validateRecipeManifest(left.Manifest); err != nil {
+		return RecipeDiff{}, fmt.Errorf("left recipe: %w", err)
+	}
+	if err := validateRecipeManifest(right.Manifest); err != nil {
+		return RecipeDiff{}, fmt.Errorf("right recipe: %w", err)
 	}
 	return diffRecipeReaders(left, right, opts)
 }
@@ -62,7 +65,7 @@ func diffRecipeReaders(left, right *backup.ArchiveReader, opts DiffOptions) (Rec
 	for path := range rightFiles {
 		paths[path] = true
 	}
-	var diff RecipeDiff
+	diff := RecipeDiff{Added: []DiffEntry{}, Removed: []DiffEntry{}, Changed: []DiffEntry{}}
 	for path := range paths {
 		l, inLeft := leftFiles[path]
 		r, inRight := rightFiles[path]

@@ -45,7 +45,7 @@ macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding �
 | `setup` | 在新 Mac 上检测/安装支持的 agent CLI，然后可选恢复备份 |
 | `import` | 选择性恢复 — 按工具、按项目、或全部 |
 | `recipe export` | 导出只包含 skills、agents、全局规则和安全 settings 的 `.vibe` 配方 |
-| `apply` | 应用 `.vibe` 配方，不需要完整备份 |
+| `recipe apply` | 应用 `.vibe` 配方，不需要完整备份 |
 
 **支持工具：** Claude Code &middot; Codex CLI &middot; OpenCode
 
@@ -150,7 +150,7 @@ dotvibe rollback 20260521-143012-a1b2c3 --path ~/.codex/agents/reviewer.md
 dotvibe rollback prune --keep 20 --dry-run
 ```
 
-Recipe 不包含 Claude 项目 memory、transcripts、Codex sessions、auth 文件、telemetry 或 cache 数据。`recipe apply` 会先运行 lint，并为 write / overwrite 记录 rollback。
+Recipe 不包含 Claude 项目 memory、transcripts、Codex sessions、auth 文件、telemetry 或 cache 数据。`recipe apply` 会先运行 lint，并为 write / overwrite 记录 rollback。顶层 `dotvibe apply` 仅保留为 deprecated 兼容别名。
 
 ## 备份范围
 
