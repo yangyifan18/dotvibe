@@ -124,11 +124,26 @@ func rollbackOne(store rollback.Store, record rollback.RollbackRecord, entry rol
 	}
 	if !force {
 		current, err := os.ReadFile(entry.TargetPath)
-		if err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		if err == nil && bytesSHAForCmd(current) != entry.AfterSHA256 {
-			return fmt.Errorf("target changed after apply")
+		if entry.BeforeState == rollback.BeforeMissing {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if bytesSHAForCmd(current) != entry.AfterSHA256 {
+				return fmt.Errorf("target changed after apply")
+			}
+		} else {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("target missing after apply")
+			}
+			if err != nil {
+				return err
+			}
+			if bytesSHAForCmd(current) != entry.AfterSHA256 {
+				return fmt.Errorf("target changed after apply")
+			}
 		}
 	}
 	if entry.BeforeState == rollback.BeforeMissing {
@@ -142,6 +157,9 @@ func rollbackOne(store rollback.Store, record rollback.RollbackRecord, entry rol
 	data, err := os.ReadFile(blobPath)
 	if err != nil {
 		return err
+	}
+	if got := bytesSHAForCmd(data); got != entry.BeforeSHA256 {
+		return fmt.Errorf("before blob checksum mismatch")
 	}
 	if err := os.MkdirAll(filepath.Dir(entry.TargetPath), 0755); err != nil {
 		return err
@@ -161,9 +179,54 @@ func runRollbackList(stateRoot string, w io.Writer) error {
 		return err
 	}
 	for _, record := range records {
-		fmt.Fprintf(w, "%s %s %s %.12s entries=%d\n", record.ID, record.Created.Format(time.RFC3339), record.RecipeName, record.RecipeDigest, len(record.Entries))
+		fmt.Fprintf(w, "%s %s %s digest=%s entries=%d actions=%s statuses=%s\n", record.ID, record.Created.Format(time.RFC3339), record.RecipeName, shortDigestForList(record.RecipeDigest), len(record.Entries), rollbackActionCounts(record.Entries), rollbackStatusCounts(record.Entries))
 	}
 	return nil
+}
+
+func shortDigestForList(digest string) string {
+	if digest == "" {
+		return "unknown"
+	}
+	if len(digest) <= 12 {
+		return digest
+	}
+	return digest[:12]
+}
+
+func rollbackActionCounts(entries []rollback.RollbackEntry) string {
+	return orderedRollbackCounts(entries, []string{rollback.ActionWrite, rollback.ActionOverwrite, rollback.ActionSave}, func(entry rollback.RollbackEntry) string {
+		return entry.Action
+	})
+}
+
+func rollbackStatusCounts(entries []rollback.RollbackEntry) string {
+	return orderedRollbackCounts(entries, []string{rollback.StatusPending, rollback.StatusApplied, rollback.StatusFailed}, func(entry rollback.RollbackEntry) string {
+		return entry.Status
+	})
+}
+
+func orderedRollbackCounts(entries []rollback.RollbackEntry, order []string, value func(rollback.RollbackEntry) string) string {
+	counts := map[string]int{}
+	for _, entry := range entries {
+		if v := value(entry); v != "" {
+			counts[v]++
+		}
+	}
+	var parts []string
+	for _, key := range order {
+		if counts[key] > 0 {
+			parts = append(parts, fmt.Sprintf("%s=%d", key, counts[key]))
+			delete(counts, key)
+		}
+	}
+	for key, count := range counts {
+		parts = append(parts, fmt.Sprintf("%s=%d", key, count))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, ",")
 }
 
 func runRollbackPrune(stateRoot string, keep int, olderThan string, dryRun bool, w io.Writer) error {

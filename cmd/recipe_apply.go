@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -72,18 +73,32 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 	if countImportEntries(toolFiles) == 0 {
 		return fmt.Errorf("no recipe files match selected filters")
 	}
-	preview, err := buildApplyPreview(toolFiles, adapters.RestoreOpts{Force: opts.Force})
+	selectedFiles := flattenImportFiles(toolFiles)
+	tmpDir, err := os.MkdirTemp("", "dotvibe-apply-*")
 	if err != nil {
 		return err
 	}
-	printRecipeSummary(ar.Manifest)
-	printRestorePreview(preview)
+	defer os.RemoveAll(tmpDir)
+	if err := backup.ExtractArchiveSetFiles(path, nil, tmpDir, selectedFiles); err != nil {
+		return fmt.Errorf("failed to extract recipe: %w", err)
+	}
+	plan, err := buildRecipeApplyPlanFromArchive(toolFiles, tmpDir, adapters.RestoreOpts{Force: opts.Force})
+	if err != nil {
+		return err
+	}
+	planEntries := plan.Entries
+	if opts.Yes {
+		planEntries = recipe.ResolveNonInteractiveConflicts(plan.Entries, recipe.ConflictOptions{Yes: opts.Yes, Force: opts.Force})
+	}
+	printRecipeSummary(w, ar.Manifest)
+	printRecipeApplyPlan(w, planEntries)
 	if opts.DryRun {
 		fmt.Fprintln(w, "Dry run: recipe not applied.")
 		return nil
 	}
+	input := bufio.NewReader(recipeApplyInput)
 	if !opts.Yes {
-		ok, err := confirmRecipeApply(recipeApplyInput, w)
+		ok, err := confirmRecipeApply(input, w)
 		if err != nil {
 			return err
 		}
@@ -92,26 +107,17 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 		}
 	}
 	applyID := fmt.Sprintf("%s-%s", time.Now().Format("20060102-150405"), shortRandomID())
-	tmpDir, err := os.MkdirTemp("", "dotvibe-apply-*")
+	recipeDigest, err := recipeArchiveDigest(path)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(tmpDir)
-	selectedFiles := flattenImportFiles(toolFiles)
-	if err := backup.ExtractArchiveSetFiles(path, nil, tmpDir, selectedFiles); err != nil {
-		return fmt.Errorf("failed to extract recipe: %w", err)
-	}
-	record := rollback.RollbackRecord{ID: applyID, Operation: rollback.OperationRecipeApply, Created: time.Now(), RecipePath: path, RecipeName: ar.Manifest.Recipe.Name}
+	record := rollback.RollbackRecord{ID: applyID, Operation: rollback.OperationRecipeApply, Created: time.Now(), RecipePath: path, RecipeDigest: recipeDigest, RecipeName: ar.Manifest.Recipe.Name}
 	store := rollback.NewStore(opts.StateRoot)
-	plan, err := buildRecipeApplyPlanFromArchive(toolFiles, tmpDir, adapters.RestoreOpts{Force: opts.Force})
-	if err != nil {
-		return err
-	}
-	resolved := plan.Entries
+	resolved := planEntries
 	if opts.Yes {
-		resolved = recipe.ResolveNonInteractiveConflicts(plan.Entries, recipe.ConflictOptions{Yes: opts.Yes, Force: opts.Force})
+		resolved = planEntries
 	} else {
-		resolved, err = resolveInteractiveConflicts(plan.Entries, recipeApplyInput, w)
+		resolved, err = resolveInteractiveConflicts(plan.Entries, input, w)
 		if err != nil {
 			return err
 		}
@@ -131,12 +137,19 @@ func runRecipeApply(path string, opts recipeApplyOptions, w io.Writer) error {
 
 func confirmRecipeApply(r io.Reader, w io.Writer) (bool, error) {
 	fmt.Fprint(w, "\nApply recipe? [y/N] ")
-	line, err := bufio.NewReader(r).ReadString('\n')
+	line, err := readLineForRecipeApply(r)
 	if err != nil && err != io.EOF {
 		return false, err
 	}
 	line = strings.TrimSpace(strings.ToLower(line))
 	return line == "y" || line == "yes", nil
+}
+
+func readLineForRecipeApply(r io.Reader) (string, error) {
+	if lr, ok := r.(interface{ ReadString(byte) (string, error) }); ok {
+		return lr.ReadString('\n')
+	}
+	return bufio.NewReader(r).ReadString('\n')
 }
 
 func printLintSummary(w io.Writer, result recipe.LintResult) {
@@ -145,6 +158,15 @@ func printLintSummary(w io.Writer, result recipe.LintResult) {
 
 func shortRandomID() string {
 	return fmt.Sprintf("%06x", time.Now().UnixNano()&0xffffff)
+}
+
+func recipeArchiveDigest(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum), nil
 }
 
 func buildRecipeApplyPlanFromArchive(toolFiles map[string][]adapters.FileEntry, archiveDir string, opts adapters.RestoreOpts) (recipe.ApplyPlan, error) {
@@ -204,6 +226,13 @@ type recipeApplySummary struct {
 	Saved       int
 	Skipped     int
 	Failed      int
+	SavedCopies []savedCopySummary
+}
+
+type savedCopySummary struct {
+	LogicalPath string
+	TargetPath  string
+	SavedCopy   string
 }
 
 func executeRecipeApplyPlan(entries []recipe.ApplyPlanEntry, store rollback.Store, record *rollback.RollbackRecord, archiveDir string, stateRoot string) (recipeApplySummary, error) {
@@ -223,12 +252,14 @@ func executeRecipeApplyPlan(entries []recipe.ApplyPlanEntry, store rollback.Stor
 				summary.Written++
 			}
 		case recipe.ApplyActionSave:
-			if err := applySaveEntry(entry, stateRoot, record); err != nil {
+			savedPath, err := applySaveEntry(entry, store, stateRoot, record)
+			if err != nil {
 				summary.Failed++
 				errs = append(errs, err)
 				continue
 			}
 			summary.Saved++
+			summary.SavedCopies = append(summary.SavedCopies, savedCopySummary{LogicalPath: entry.Entry.InArchive, TargetPath: entry.TargetPath, SavedCopy: savedPath})
 		case recipe.ApplyActionSame, recipe.ApplyActionSkip, recipe.ApplyActionConflict:
 			summary.Skipped++
 		}
@@ -240,50 +271,64 @@ func applyWriteEntry(entry recipe.ApplyPlanEntry, store rollback.Store, record *
 	idx := findRollbackEntry(record, entry.Entry.InArchive)
 	if idx >= 0 {
 		record.Entries[idx].Status = rollback.StatusPending
+		record.Entries[idx].Error = ""
 		if record.Entries[idx].BeforeState == rollback.BeforeFile {
 			oldData, err := os.ReadFile(entry.TargetPath)
 			if err != nil {
 				record.Entries[idx].Status = rollback.StatusFailed
 				record.Entries[idx].Error = err.Error()
-				return err
+				return saveRollbackRecordAfterError(store, record, err)
 			}
 			_, blob, err := rollback.WriteBlob(store.RecordDir(record.ID), oldData)
 			if err != nil {
 				record.Entries[idx].Status = rollback.StatusFailed
 				record.Entries[idx].Error = err.Error()
-				return err
+				return saveRollbackRecordAfterError(store, record, err)
 			}
 			record.Entries[idx].BeforeBlob = blob
+			if err := store.Save(*record); err != nil {
+				return err
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(entry.TargetPath), 0755); err != nil {
 		markRollbackFailed(record, idx, err)
-		return err
+		return saveRollbackRecordAfterError(store, record, err)
 	}
 	if err := os.WriteFile(entry.TargetPath, entry.RecipeContent, 0644); err != nil {
 		markRollbackFailed(record, idx, err)
-		return err
+		return saveRollbackRecordAfterError(store, record, err)
 	}
 	if idx >= 0 {
 		record.Entries[idx].Status = rollback.StatusApplied
+		record.Entries[idx].Error = ""
+		if err := store.Save(*record); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-func applySaveEntry(entry recipe.ApplyPlanEntry, stateRoot string, record *rollback.RollbackRecord) error {
+func applySaveEntry(entry recipe.ApplyPlanEntry, store rollback.Store, stateRoot string, record *rollback.RollbackRecord) (string, error) {
 	savedPath := recipe.IncomingPath(stateRoot, record.ID, entry.Entry.InArchive)
 	if err := os.MkdirAll(filepath.Dir(savedPath), 0755); err != nil {
-		return err
+		markRollbackFailed(record, findRollbackEntry(record, entry.Entry.InArchive), err)
+		return "", saveRollbackRecordAfterError(store, record, err)
 	}
 	if err := os.WriteFile(savedPath, entry.RecipeContent, 0644); err != nil {
-		return err
+		markRollbackFailed(record, findRollbackEntry(record, entry.Entry.InArchive), err)
+		return "", saveRollbackRecordAfterError(store, record, err)
 	}
 	idx := findRollbackEntry(record, entry.Entry.InArchive)
 	if idx >= 0 {
 		record.Entries[idx].SavedCopy = savedPath
 		record.Entries[idx].Status = rollback.StatusApplied
+		record.Entries[idx].Error = ""
+		if err := store.Save(*record); err != nil {
+			return "", err
+		}
 	}
-	return nil
+	return savedPath, nil
 }
 
 func findRollbackEntry(record *rollback.RollbackRecord, logicalPath string) int {
@@ -302,8 +347,37 @@ func markRollbackFailed(record *rollback.RollbackRecord, idx int, err error) {
 	}
 }
 
+func saveRollbackRecordAfterError(store rollback.Store, record *rollback.RollbackRecord, err error) error {
+	if saveErr := store.Save(*record); saveErr != nil {
+		return errors.Join(err, saveErr)
+	}
+	return err
+}
+
 func printRecipeApplySummary(w io.Writer, summary recipeApplySummary) {
 	fmt.Fprintf(w, "Summary: written=%d overwritten=%d saved=%d skipped=%d failed=%d\n", summary.Written, summary.Overwritten, summary.Saved, summary.Skipped, summary.Failed)
+	for _, saved := range summary.SavedCopies {
+		fmt.Fprintf(w, "Saved copy: %s -> %s\n", saved.LogicalPath, saved.SavedCopy)
+		fmt.Fprintf(w, "Suggested diff: diff -u %s %s\n", shellQuotePath(saved.TargetPath), shellQuotePath(saved.SavedCopy))
+	}
+}
+
+func printRecipeApplyPlan(w io.Writer, entries []recipe.ApplyPlanEntry) {
+	fmt.Fprintln(w, "Apply plan:")
+	for _, entry := range entries {
+		action := entry.Action
+		if entry.ResolvedAction != "" && entry.ResolvedAction != entry.Action {
+			action = fmt.Sprintf("%s -> %s", entry.Action, entry.ResolvedAction)
+		}
+		fmt.Fprintf(w, "  %s -> %s [%s]\n", entry.Entry.InArchive, entry.TargetPath, action)
+	}
+}
+
+func shellQuotePath(path string) string {
+	if path == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
 }
 
 func resolveInteractiveConflicts(entries []recipe.ApplyPlanEntry, r io.Reader, w io.Writer) ([]recipe.ApplyPlanEntry, error) {
@@ -333,7 +407,8 @@ func resolveInteractiveConflicts(entries []recipe.ApplyPlanEntry, r io.Reader, w
 			case recipe.ConflictChoiceSave:
 				resolved[i].ResolvedAction = recipe.ApplyActionSave
 			case recipe.ConflictChoiceKeepAll, recipe.ConflictChoiceUseAll, recipe.ConflictChoiceSaveAll:
-				return recipe.ApplyConflictChoice(resolved, choice), nil
+				applyConflictChoiceToRemaining(resolved, i, choice)
+				return resolved, nil
 			default:
 				fmt.Fprintln(w, "Unknown choice")
 				continue
@@ -342,4 +417,20 @@ func resolveInteractiveConflicts(entries []recipe.ApplyPlanEntry, r io.Reader, w
 		}
 	}
 	return resolved, scanner.Err()
+}
+
+func applyConflictChoiceToRemaining(entries []recipe.ApplyPlanEntry, start int, choice string) {
+	for i := start; i < len(entries); i++ {
+		if entries[i].Action != recipe.ApplyActionConflict || entries[i].ResolvedAction != recipe.ApplyActionConflict {
+			continue
+		}
+		switch choice {
+		case recipe.ConflictChoiceKeepAll:
+			entries[i].ResolvedAction = recipe.ApplyActionSkip
+		case recipe.ConflictChoiceUseAll:
+			entries[i].ResolvedAction = recipe.ApplyActionOverwrite
+		case recipe.ConflictChoiceSaveAll:
+			entries[i].ResolvedAction = recipe.ApplyActionSave
+		}
+	}
 }

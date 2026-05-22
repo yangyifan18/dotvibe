@@ -35,28 +35,28 @@ func UnifiedTextDiff(oldName, newName string, oldData, newData []byte) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "--- %s\n", oldName)
 	fmt.Fprintf(&b, "+++ %s\n", newName)
-	max := len(oldLines)
-	if len(newLines) > max {
-		max = len(newLines)
+	common := lcsLines(oldLines, newLines)
+	oldIndex, newIndex := 0, 0
+	for _, line := range common {
+		for oldIndex < len(oldLines) && oldLines[oldIndex] != line {
+			fmt.Fprintf(&b, "-%s\n", oldLines[oldIndex])
+			oldIndex++
+		}
+		for newIndex < len(newLines) && newLines[newIndex] != line {
+			fmt.Fprintf(&b, "+%s\n", newLines[newIndex])
+			newIndex++
+		}
+		fmt.Fprintf(&b, " %s\n", line)
+		oldIndex++
+		newIndex++
 	}
-	for i := 0; i < max; i++ {
-		var oldLine, newLine string
-		if i < len(oldLines) {
-			oldLine = oldLines[i]
-		}
-		if i < len(newLines) {
-			newLine = newLines[i]
-		}
-		switch {
-		case i >= len(oldLines):
-			fmt.Fprintf(&b, "+%s\n", newLine)
-		case i >= len(newLines):
-			fmt.Fprintf(&b, "-%s\n", oldLine)
-		case oldLine == newLine:
-			fmt.Fprintf(&b, " %s\n", oldLine)
-		default:
-			fmt.Fprintf(&b, "-%s\n+%s\n", oldLine, newLine)
-		}
+	for oldIndex < len(oldLines) {
+		fmt.Fprintf(&b, "-%s\n", oldLines[oldIndex])
+		oldIndex++
+	}
+	for newIndex < len(newLines) {
+		fmt.Fprintf(&b, "+%s\n", newLines[newIndex])
+		newIndex++
 	}
 	return b.String()
 }
@@ -68,4 +68,63 @@ func splitDiffLines(data []byte) []string {
 		return nil
 	}
 	return strings.Split(text, "\n")
+}
+
+func lcsLines(a, b []string) []string {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	if len(a) == 1 {
+		for _, line := range b {
+			if line == a[0] {
+				return []string{a[0]}
+			}
+		}
+		return nil
+	}
+
+	mid := len(a) / 2
+	leftScores := lcsLengths(a[:mid], b)
+	rightScores := lcsLengths(reverseLines(a[mid:]), reverseLines(b))
+	split := 0
+	best := -1
+	for i := 0; i <= len(b); i++ {
+		score := leftScores[i] + rightScores[len(b)-i]
+		if score > best {
+			best = score
+			split = i
+		}
+	}
+
+	left := lcsLines(a[:mid], b[:split])
+	right := lcsLines(a[mid:], b[split:])
+	return append(left, right...)
+}
+
+func lcsLengths(a, b []string) []int {
+	prev := make([]int, len(b)+1)
+	for _, aLine := range a {
+		curr := make([]int, len(b)+1)
+		for j, bLine := range b {
+			if aLine == bLine {
+				curr[j+1] = prev[j] + 1
+				continue
+			}
+			if curr[j] > prev[j+1] {
+				curr[j+1] = curr[j]
+			} else {
+				curr[j+1] = prev[j+1]
+			}
+		}
+		prev = curr
+	}
+	return prev
+}
+
+func reverseLines(lines []string) []string {
+	out := make([]string, len(lines))
+	for i := range lines {
+		out[len(lines)-1-i] = lines[i]
+	}
+	return out
 }

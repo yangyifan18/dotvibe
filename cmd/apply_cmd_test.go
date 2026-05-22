@@ -92,6 +92,44 @@ func TestRecipeApplyDryRunDoesNotCreateRollback(t *testing.T) {
 	}
 }
 
+func TestRecipeApplyDryRunPrintsContentAwarePlan(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "same.md"), "same\n")
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "conflict.md"), "local\n")
+	state := t.TempDir()
+	path := buildRecipeCommandFixture(t, map[string]string{
+		"codex-cli/agents/new.md":      "new\n",
+		"codex-cli/agents/same.md":     "same\n",
+		"codex-cli/agents/conflict.md": "recipe\n",
+	})
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{Yes: true, DryRun: true, StateRoot: state, ScanContent: true}, &out); err != nil {
+		t.Fatalf("runRecipeApply dry-run: %v", err)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"Apply plan:",
+		"codex-cli/agents/new.md",
+		"[write]",
+		"codex-cli/agents/same.md",
+		"[same]",
+		"codex-cli/agents/conflict.md",
+		"[conflict -> skip]",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("dry-run output missing %q:\n%s", want, output)
+		}
+	}
+	if data, _ := os.ReadFile(filepath.Join(home, ".codex", "agents", "conflict.md")); string(data) != "local\n" {
+		t.Fatalf("dry-run changed conflict target to %q", string(data))
+	}
+	if entries, _ := os.ReadDir(filepath.Join(state, "rollbacks")); len(entries) != 0 {
+		t.Fatalf("dry-run created rollback entries: %#v", entries)
+	}
+}
+
 func TestRecipeApplyCreatesRollbackForNewFile(t *testing.T) {
 	home := t.TempDir()
 	oldHome := testSetHome(t, home)
@@ -113,6 +151,30 @@ func TestRecipeApplyCreatesRollbackForNewFile(t *testing.T) {
 	entry := records[0].Entries[0]
 	if entry.BeforeState != rollback.BeforeMissing || entry.Status != rollback.StatusApplied || entry.Action != rollback.ActionWrite {
 		t.Fatalf("unexpected rollback entry: %#v", entry)
+	}
+	if records[0].RecipeDigest == "" {
+		t.Fatalf("rollback recipe digest should be populated: %#v", records[0])
+	}
+}
+
+func TestRecipeApplyOnlyFiltersTools(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	state := t.TempDir()
+	path := buildRecipeCommandFixture(t, map[string]string{
+		"codex-cli/agents/reviewer.md": "codex\n",
+		"opencode/config/config.json":  "{}\n",
+	})
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{Yes: true, Only: "codex-cli", StateRoot: state, ScanContent: true}, &out); err != nil {
+		t.Fatalf("runRecipeApply --only: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "agents", "reviewer.md")); err != nil {
+		t.Fatalf("codex target should be written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config", "opencode", "config.json")); !os.IsNotExist(err) {
+		t.Fatalf("opencode target should not be written, stat err=%v", err)
 	}
 }
 
@@ -140,6 +202,63 @@ func TestRecipeApplyForceOverwriteStoresBeforeBlob(t *testing.T) {
 	}
 }
 
+func TestRecipeApplySaveOutputsSavedCopyAndDiffCommand(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	target := filepath.Join(home, ".codex", "agents", "reviewer.md")
+	writeFileForImportTest(t, target, "local\n")
+	state := t.TempDir()
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/reviewer.md": "recipe\n"})
+	oldInput := recipeApplyInput
+	recipeApplyInput = strings.NewReader("y\ns\n")
+	defer func() { recipeApplyInput = oldInput }()
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{StateRoot: state, ScanContent: true}, &out); err != nil {
+		t.Fatalf("runRecipeApply save: %v", err)
+	}
+	output := out.String()
+	savedPath := filepath.Join(state, "incoming")
+	for _, want := range []string{"Saved copy:", savedPath, "Suggested diff:", "diff -u"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("save output missing %q:\n%s", want, output)
+		}
+	}
+	data, _ := os.ReadFile(target)
+	if string(data) != "local\n" {
+		t.Fatalf("save should not replace target, got %q", string(data))
+	}
+}
+
+func TestRecipeApplySaveFailureMarksRollbackFailed(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	target := filepath.Join(home, ".codex", "agents", "reviewer.md")
+	writeFileForImportTest(t, target, "local\n")
+	state := t.TempDir()
+	writeFileForImportTest(t, filepath.Join(state, "incoming"), "not a directory\n")
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/reviewer.md": "recipe\n"})
+	oldInput := recipeApplyInput
+	recipeApplyInput = strings.NewReader("y\ns\n")
+	defer func() { recipeApplyInput = oldInput }()
+	var out bytes.Buffer
+	if err := runRecipeApply(path, recipeApplyOptions{StateRoot: state, ScanContent: true}, &out); err == nil {
+		t.Fatal("expected save failure")
+	}
+	records, err := rollback.NewStore(state).List()
+	if err != nil {
+		t.Fatalf("List rollbacks: %v", err)
+	}
+	if len(records) != 1 || len(records[0].Entries) != 1 {
+		t.Fatalf("records = %#v", records)
+	}
+	entry := records[0].Entries[0]
+	if entry.Status != rollback.StatusFailed || entry.Error == "" {
+		t.Fatalf("save failure should mark rollback entry failed with error: %#v", entry)
+	}
+}
+
 func TestRecipeApplyPromptsWhenYesIsNotSet(t *testing.T) {
 	home := t.TempDir()
 	oldHome := testSetHome(t, home)
@@ -158,5 +277,52 @@ func TestRecipeApplyPromptsWhenYesIsNotSet(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(filepath.Join(state, "rollbacks")); len(entries) != 0 {
 		t.Fatalf("cancelled apply created rollback entries: %#v", entries)
+	}
+}
+
+func TestResolveInteractiveConflictsAllRemainingPreservesPreviousChoices(t *testing.T) {
+	entries := []recipe.ApplyPlanEntry{
+		{Entry: adapters.FileEntry{InArchive: "codex-cli/agents/one.md"}, Action: recipe.ApplyActionConflict, ResolvedAction: recipe.ApplyActionConflict},
+		{Entry: adapters.FileEntry{InArchive: "codex-cli/agents/two.md"}, Action: recipe.ApplyActionConflict, ResolvedAction: recipe.ApplyActionConflict},
+		{Entry: adapters.FileEntry{InArchive: "codex-cli/agents/three.md"}, Action: recipe.ApplyActionConflict, ResolvedAction: recipe.ApplyActionConflict},
+	}
+	resolved, err := resolveInteractiveConflicts(entries, strings.NewReader("s\nra\n"), &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("resolveInteractiveConflicts: %v", err)
+	}
+	if resolved[0].ResolvedAction != recipe.ApplyActionSave {
+		t.Fatalf("first choice should stay save, got %#v", resolved)
+	}
+	if resolved[1].ResolvedAction != recipe.ApplyActionOverwrite || resolved[2].ResolvedAction != recipe.ApplyActionOverwrite {
+		t.Fatalf("remaining choices should be overwrite, got %#v", resolved)
+	}
+}
+
+func TestDeprecatedTopLevelApplyAllowsRisk(t *testing.T) {
+	if applyCmd.Flags().Lookup("allow-risk") == nil {
+		t.Fatal("deprecated apply should expose --allow-risk")
+	}
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	path := buildRecipeCommandFixture(t, map[string]string{"codex-cli/agents/leak.md": "sk-proj-abcdefghijklmnopqrstuvwxyz123456\n"})
+	oldYes, oldForce, oldDryRun, oldOnly, oldAllowRisk := applyYes, applyForce, applyDryRun, applyOnly, applyAllowRisk
+	defer func() {
+		applyYes, applyForce, applyDryRun, applyOnly, applyAllowRisk = oldYes, oldForce, oldDryRun, oldOnly, oldAllowRisk
+	}()
+	if err := applyCmd.Flags().Set("yes", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyCmd.Flags().Set("dry-run", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyCmd.Flags().Set("allow-risk", "true"); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	applyCmd.SetOut(&out)
+	applyCmd.SetErr(&out)
+	if err := applyCmd.RunE(applyCmd, []string{path}); err != nil {
+		t.Fatalf("deprecated apply --allow-risk dry-run: %v\n%s", err, out.String())
 	}
 }

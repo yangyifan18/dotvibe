@@ -12,7 +12,12 @@ func TestRunRecipeInspectHumanAndJSON(t *testing.T) {
 	if err := runRecipeInspect(path, false, &human); err != nil {
 		t.Fatalf("runRecipeInspect human: %v", err)
 	}
-	if !strings.Contains(human.String(), "Recipe:") || !strings.Contains(human.String(), "codex-cli") {
+	for _, want := range []string{"Recipe:", "Created:", "Risks: errors=", "Tools:", "Files:", "codex-cli"} {
+		if !strings.Contains(human.String(), want) {
+			t.Fatalf("human output missing %q: %s", want, human.String())
+		}
+	}
+	if strings.Contains(human.String(), "Author: \n") {
 		t.Fatalf("unexpected human output: %s", human.String())
 	}
 	var jsonOut bytes.Buffer

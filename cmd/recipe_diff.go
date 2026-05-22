@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/recipe"
@@ -55,10 +56,38 @@ func runRecipeDiff(left, right string, opts recipeDiffOptions, w io.Writer) erro
 }
 
 func printRecipeDiffEntries(w io.Writer, entries []recipe.DiffEntry) {
-	for _, entry := range entries {
-		fmt.Fprintf(w, "  %s\n", entry.Path)
+	for _, entry := range groupRecipeDiffEntries(entries) {
+		fmt.Fprintf(w, "  [%s/%s] %s", entry.ToolID, entry.Category, entry.Path)
+		if entry.LeftSHA256 != "" || entry.RightSHA256 != "" {
+			fmt.Fprintf(w, " (%s -> %s)", shortDiffSHA(entry.LeftSHA256), shortDiffSHA(entry.RightSHA256))
+		}
+		fmt.Fprintln(w)
 		if entry.ContentDiff != "" {
 			fmt.Fprintln(w, entry.ContentDiff)
 		}
 	}
+}
+
+func groupRecipeDiffEntries(entries []recipe.DiffEntry) []recipe.DiffEntry {
+	grouped := append([]recipe.DiffEntry(nil), entries...)
+	sort.SliceStable(grouped, func(i, j int) bool {
+		if grouped[i].ToolID != grouped[j].ToolID {
+			return grouped[i].ToolID < grouped[j].ToolID
+		}
+		if grouped[i].Category != grouped[j].Category {
+			return grouped[i].Category < grouped[j].Category
+		}
+		return grouped[i].Path < grouped[j].Path
+	})
+	return grouped
+}
+
+func shortDiffSHA(sum string) string {
+	if sum == "" {
+		return "-"
+	}
+	if len(sum) <= 12 {
+		return sum
+	}
+	return sum[:12]
 }

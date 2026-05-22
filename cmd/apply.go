@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/adapters"
@@ -10,10 +11,11 @@ import (
 )
 
 var (
-	applyYes    bool
-	applyForce  bool
-	applyDryRun bool
-	applyOnly   string
+	applyYes       bool
+	applyForce     bool
+	applyDryRun    bool
+	applyOnly      string
+	applyAllowRisk bool
 )
 
 var applyCmd = &cobra.Command{
@@ -23,7 +25,7 @@ var applyCmd = &cobra.Command{
 	Args:       cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(cmd.ErrOrStderr(), "dotvibe apply is deprecated; use dotvibe recipe apply")
-		return runRecipeApply(args[0], recipeApplyOptions{Yes: applyYes, Force: applyForce, DryRun: applyDryRun, Only: applyOnly, ScanContent: true}, cmd.OutOrStdout())
+		return runRecipeApply(args[0], recipeApplyOptions{Yes: applyYes, Force: applyForce, DryRun: applyDryRun, Only: applyOnly, AllowRisk: applyAllowRisk, ScanContent: true}, cmd.OutOrStdout())
 	},
 }
 
@@ -32,6 +34,7 @@ func init() {
 	applyCmd.Flags().BoolVar(&applyForce, "force", false, "overwrite existing files")
 	applyCmd.Flags().BoolVar(&applyDryRun, "dry-run", false, "preview apply without writing files")
 	applyCmd.Flags().StringVar(&applyOnly, "only", "", "only apply specified tools")
+	applyCmd.Flags().BoolVar(&applyAllowRisk, "allow-risk", false, "allow applying recipes with lint errors")
 	rootCmd.AddCommand(applyCmd)
 }
 
@@ -95,13 +98,13 @@ func buildApplyPreview(toolFiles map[string][]adapters.FileEntry, opts adapters.
 	return buildRestorePreview(toolFiles, opts)
 }
 
-func printRecipeSummary(m *backup.Manifest) {
-	fmt.Printf("Recipe: %s\n", m.Recipe.Name)
+func printRecipeSummary(w io.Writer, m *backup.Manifest) {
+	fmt.Fprintf(w, "Recipe: %s\n", m.Recipe.Name)
 	if m.Recipe.Description != "" {
-		fmt.Printf("Description: %s\n", m.Recipe.Description)
+		fmt.Fprintf(w, "Description: %s\n", m.Recipe.Description)
 	}
 	if m.Recipe.Author != "" {
-		fmt.Printf("Author: %s\n", m.Recipe.Author)
+		fmt.Fprintf(w, "Author: %s\n", m.Recipe.Author)
 	}
 }
 

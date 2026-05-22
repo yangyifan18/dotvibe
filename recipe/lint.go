@@ -1,10 +1,13 @@
 package recipe
 
 import (
-	"fmt"
+	"errors"
+	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
+	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
 )
 
@@ -49,13 +52,15 @@ func LintArchive(path string, opts LintOptions) (LintResult, error) {
 		return LintResult{}, err
 	}
 	defer ar.Close()
-	var result LintResult
-	if ar.Manifest.ArchiveKind != backup.ArchiveKindRecipe || ar.Manifest.Recipe == nil {
-		result.add(SeverityError, "not_recipe", "", "archive is not a dotvibe recipe")
+	result := newLintResult()
+	if err := validateRecipeManifest(ar.Manifest); err != nil {
+		var manifestErr recipeManifestError
+		if errors.As(err, &manifestErr) {
+			result.add(SeverityError, manifestErr.code, "", manifestErr.message)
+		} else {
+			result.add(SeverityError, "invalid_manifest", "", err.Error())
+		}
 		return result, nil
-	}
-	if ar.Manifest.Recipe.Schema != backup.RecipeSchemaV1 {
-		result.add(SeverityError, "schema_mismatch", "", fmt.Sprintf("unsupported recipe schema %q", ar.Manifest.Recipe.Schema))
 	}
 	if ar.Manifest.Recipe.Author == "" {
 		result.add(SeverityInfo, "missing_author", "", "recipe has no author")
@@ -64,7 +69,7 @@ func LintArchive(path string, opts LintOptions) (LintResult, error) {
 		result.add(SeverityInfo, "missing_description", "", "recipe has no description")
 	}
 	for _, file := range ar.Manifest.Files {
-		lintPath(file.Path, &result)
+		lintFileManifest(file, &result)
 		if opts.ScanContent {
 			data, readErr := ar.ReadFile(file.Path)
 			if readErr != nil {
@@ -75,6 +80,10 @@ func LintArchive(path string, opts LintOptions) (LintResult, error) {
 		}
 	}
 	return result, nil
+}
+
+func newLintResult() LintResult {
+	return LintResult{Findings: []LintFinding{}}
 }
 
 func (r *LintResult) add(severity, code, path, message string) {
@@ -97,8 +106,28 @@ var secretRules = []struct {
 	{"local_user_path", SeverityWarning, regexp.MustCompile(`/Users/[A-Za-z0-9._\-]+/`), "local user path found"},
 }
 
-func lintPath(path string, result *LintResult) {
-	lower := strings.ToLower(path)
+func lintFileManifest(file backup.FileManifest, result *LintResult) {
+	lintCategory(file.Path, file.Category, result)
+	lintPath(file.Path, result)
+}
+
+func lintCategory(filePath, category string, result *LintResult) {
+	switch strings.ToLower(category) {
+	case adapters.CategoryHistory, adapters.CategoryMemory:
+		result.add(SeverityError, "sensitive_category", filePath, "memory or history category is not allowed in recipes")
+	}
+}
+
+func lintPath(filePath string, result *LintResult) {
+	lower := strings.ToLower(path.Clean(filePath))
+	reported := map[string]bool{}
+	addPathFinding := func(code, message string) {
+		if reported[code] {
+			return
+		}
+		reported[code] = true
+		result.add(SeverityError, code, filePath, message)
+	}
 	blockedPrefixes := map[string]string{
 		"claude-code/projects/":    "project_memory_path",
 		"claude-code/transcripts/": "transcripts_path",
@@ -106,27 +135,54 @@ func lintPath(path string, result *LintResult) {
 	}
 	for prefix, code := range blockedPrefixes {
 		if strings.HasPrefix(lower, prefix) {
-			result.add(SeverityError, code, path, "personal history or project memory path is not allowed in recipes")
+			addPathFinding(code, "personal history or project memory path is not allowed in recipes")
 		}
 	}
-	blockedFragments := map[string]string{
-		"/cache/":     "cache_path",
-		"/telemetry/": "telemetry_path",
+
+	segmentCodes := map[string]string{
+		"history":        "history_path",
+		"history.jsonl":  "history_path",
+		"project":        "project_path",
+		"projects":       "project_path",
+		"transcript":     "transcripts_path",
+		"transcripts":    "transcripts_path",
+		"session":        "sessions_path",
+		"sessions":       "sessions_path",
+		"cache":          "cache_path",
+		".cache":         "cache_path",
+		"cache.json":     "cache_path",
+		"telemetry":      "telemetry_path",
+		"telemetry.json": "telemetry_path",
 	}
-	for fragment, code := range blockedFragments {
-		if strings.Contains(lower, fragment) {
-			result.add(SeverityError, code, path, "cache or telemetry path is not allowed in recipes")
+	for _, segment := range strings.Split(lower, "/") {
+		if code, ok := segmentCodes[segment]; ok {
+			addPathFinding(code, "sensitive path segment is not allowed in recipes")
 		}
 	}
-	blockedNames := []string{"auth.json", "credentials.json", "token.json", ".env", "id_rsa"}
-	for _, name := range blockedNames {
-		if strings.HasSuffix(lower, "/"+name) || lower == name {
-			result.add(SeverityError, "credential_filename", path, "credential-like filename is not allowed in recipes")
-		}
+
+	if isCredentialLikeFilename(path.Base(lower)) {
+		result.add(SeverityError, "credential_filename", filePath, "credential-like filename is not allowed in recipes")
 	}
 }
 
+func isCredentialLikeFilename(name string) bool {
+	switch name {
+	case "auth.json", "credentials.json", "token.json", "tokens.json", ".env", "id_rsa", "id_ed25519", "id_ecdsa", "id_dsa":
+		return true
+	}
+	return strings.HasSuffix(name, ".pem")
+}
+
 func lintContent(path string, data []byte, result *LintResult) {
+	if len(data) > RecipeTextDiffMaxBytes {
+		if looksBinary(data) {
+			result.add(SeverityWarning, "binary_file", path, "binary file cannot be content-scanned")
+			return
+		}
+		lintSecretRules(path, data[:RecipeTextDiffMaxBytes], result)
+		result.add(SeverityWarning, "large_file", path, "large file was not fully content-scanned")
+		return
+	}
 	kind := ClassifyText(data, len(data))
 	if kind == TextKindBinary {
 		result.add(SeverityWarning, "binary_file", path, "binary file cannot be content-scanned")
@@ -136,10 +192,23 @@ func lintContent(path string, data []byte, result *LintResult) {
 		result.add(SeverityWarning, "large_file", path, "large file was not fully content-scanned")
 		return
 	}
+	lintSecretRules(path, data, result)
+}
+
+func lintSecretRules(path string, data []byte, result *LintResult) {
 	content := string(data)
 	for _, rule := range secretRules {
 		if rule.re.MatchString(content) {
 			result.add(rule.severity, rule.code, path, rule.message)
 		}
 	}
+}
+
+func looksBinary(data []byte) bool {
+	for _, b := range data {
+		if b == 0 {
+			return true
+		}
+	}
+	return !utf8.Valid(data)
 }
