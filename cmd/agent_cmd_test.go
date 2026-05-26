@@ -78,3 +78,15 @@ func createAgentPlanArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
 	return createDiffArchive(t, files)
 }
+
+func TestRunAgentImportPlanValidatesRequiredBases(t *testing.T) {
+	archive, _, expectedDigest := makeIncrementalImportArchivePair(t)
+	var out bytes.Buffer
+	err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out)
+	if err == nil {
+		t.Fatal("expected missing base archive to fail")
+	}
+	if !strings.Contains(err.Error(), expectedDigest) {
+		t.Fatalf("error = %q, want base digest %s", err.Error(), expectedDigest)
+	}
+}

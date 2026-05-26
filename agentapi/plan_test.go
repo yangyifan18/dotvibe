@@ -52,3 +52,22 @@ func writeAgentAPITestFile(path, content string) error {
 	}
 	return os.WriteFile(path, []byte(content), 0644)
 }
+
+func TestBuildExportPlanUsesSingleOnlyFlagForMultipleTools(t *testing.T) {
+	plan, err := BuildExportPlan(ExportPlanOptions{Profile: "full", Output: "backup.tar.gz", OnlyTools: []string{"codex-cli", "claude-code"}})
+	if err != nil {
+		t.Fatalf("BuildExportPlan: %v", err)
+	}
+	var onlyCount int
+	for i, arg := range plan.Command {
+		if arg == "--only" {
+			onlyCount++
+			if i+1 >= len(plan.Command) || plan.Command[i+1] != "codex-cli,claude-code" {
+				t.Fatalf("--only args = %#v", plan.Command)
+			}
+		}
+	}
+	if onlyCount != 1 {
+		t.Fatalf("--only count = %d, command = %#v", onlyCount, plan.Command)
+	}
+}

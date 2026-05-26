@@ -2,6 +2,7 @@ package agentapi
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/yangyifan18/dotvibe/adapters"
@@ -99,8 +100,8 @@ func BuildExportPlan(opts ExportPlanOptions) (ExportPlan, error) {
 	default:
 		return ExportPlan{}, fmt.Errorf("unsupported export profile %q", opts.Profile)
 	}
-	for _, tool := range opts.OnlyTools {
-		plan.Command = append(plan.Command, "--only", tool)
+	if len(opts.OnlyTools) > 0 {
+		plan.Command = append(plan.Command, "--only", strings.Join(opts.OnlyTools, ","))
 	}
 	return plan, nil
 }

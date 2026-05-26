@@ -11,4 +11,4 @@ Use this on the new Mac.
 7. If the user chooses direct import, run `dotvibe import <archive> --dry-run` first.
 8. Ask before direct write. Use `--yes` only after explicit confirmation.
 9. Avoid `--force` unless the user chooses overwrite after seeing conflicts.
-10. After import, summarize changed files and show `dotvibe rollback list` plus the relevant apply/import id if available.
+10. After full-archive import, summarize changed files and note that full imports currently do not create rollback records; use staged/local copies or a fresh backup for manual recovery. For recipe apply flows, show `dotvibe rollback list` plus the relevant apply id.

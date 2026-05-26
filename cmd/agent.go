@@ -164,11 +164,16 @@ func runAgentExportPlan(opts agentExportPlanOptions, w io.Writer) error {
 }
 
 func runAgentImportPlan(path string, opts agentImportPlanOptions, w io.Writer) error {
-	ar, toolFiles, err := readImportPlanArchive(path, opts)
+	ar, toolFiles, selectedFiles, err := readImportPlanArchive(path, opts)
 	if err != nil {
 		return err
 	}
 	defer ar.Close()
+	set, err := backup.OpenArchiveSetForFiles(path, opts.Bases, selectedFiles)
+	if err != nil {
+		return fmt.Errorf("failed to read archive: %w", err)
+	}
+	defer set.Close()
 	preview, err := buildRestorePreview(toolFiles, adapters.RestoreOpts{Force: opts.Force, Project: opts.Project})
 	if err != nil {
 		return err
@@ -184,10 +189,10 @@ func runAgentImportPlan(path string, opts agentImportPlanOptions, w io.Writer) e
 	return nil
 }
 
-func readImportPlanArchive(path string, opts agentImportPlanOptions) (*backup.ArchiveReader, map[string][]adapters.FileEntry, error) {
+func readImportPlanArchive(path string, opts agentImportPlanOptions) (*backup.ArchiveReader, map[string][]adapters.FileEntry, []string, error) {
 	ar, err := backup.ReadArchive(path)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to read archive: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to read archive: %w", err)
 	}
 	toolFiles := groupRecipeManifestFiles(ar.Manifest.Files)
 	if len(ar.Manifest.Files) == 0 {
@@ -199,5 +204,5 @@ func readImportPlanArchive(path string, opts agentImportPlanOptions) (*backup.Ar
 	if opts.Project != "" {
 		toolFiles = filterImportEntriesByProject(toolFiles, opts.Project)
 	}
-	return ar, toolFiles, nil
+	return ar, toolFiles, flattenImportFiles(toolFiles), nil
 }
