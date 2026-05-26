@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,5 +32,19 @@ func TestRunAgentDoctorHuman(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "dotvibe agent doctor") || !strings.Contains(out.String(), "Capabilities") {
 		t.Fatalf("unexpected output: %s", out.String())
+	}
+}
+
+func TestRunAgentInventoryJSON(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "# Reviewer\n")
+	var out bytes.Buffer
+	if err := runAgentInventory(agentInventoryOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentInventory: %v", err)
+	}
+	if !strings.Contains(out.String(), `"recommended_profiles"`) || !strings.Contains(out.String(), `"codex-cli"`) {
+		t.Fatalf("unexpected inventory JSON: %s", out.String())
 	}
 }

@@ -63,3 +63,33 @@ func writeAgentJSON(w io.Writer, value any) error {
 	fmt.Fprintln(w, string(data))
 	return nil
 }
+
+type agentInventoryOptions struct{ JSON bool }
+
+var agentInventoryOpts agentInventoryOptions
+
+var agentInventoryCmd = &cobra.Command{
+	Use:   "inventory",
+	Short: "Print agent-facing migration inventory",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runAgentInventory(agentInventoryOpts, cmd.OutOrStdout())
+	},
+}
+
+func init() {
+	agentInventoryCmd.Flags().BoolVar(&agentInventoryOpts.JSON, "json", false, "print JSON")
+	agentCmd.AddCommand(agentInventoryCmd)
+}
+
+func runAgentInventory(opts agentInventoryOptions, w io.Writer) error {
+	report := agentapi.BuildInventory(agentapi.InventoryOptions{Adapters: adapters.AllAdapters()})
+	if opts.JSON {
+		return writeAgentJSON(w, report)
+	}
+	fmt.Fprintln(w, "dotvibe agent inventory")
+	for _, tool := range report.Tools {
+		fmt.Fprintf(w, "  %s: detected=%v categories=%d\n", tool.ID, tool.Detected, len(tool.Categories))
+	}
+	fmt.Fprintln(w, "Profiles: full, project-memory, recipe")
+	return nil
+}
