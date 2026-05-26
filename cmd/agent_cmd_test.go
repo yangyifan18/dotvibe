@@ -48,3 +48,33 @@ func TestRunAgentInventoryJSON(t *testing.T) {
 		t.Fatalf("unexpected inventory JSON: %s", out.String())
 	}
 }
+
+func TestRunAgentExportPlanJSON(t *testing.T) {
+	var out bytes.Buffer
+	if err := runAgentExportPlan(agentExportPlanOptions{JSON: true, Profile: "recipe", Output: "team.vibe", Name: "Team", Author: "yyf"}, &out); err != nil {
+		t.Fatalf("runAgentExportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"profile": "recipe"`) || !strings.Contains(out.String(), `"recipe"`) {
+		t.Fatalf("unexpected export plan: %s", out.String())
+	}
+}
+
+func TestRunAgentImportPlanJSON(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "local\n")
+	archive := createAgentPlanArchive(t, map[string]string{"codex-cli/agents/reviewer.md": "archive\n"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"conflicts": 1`) || !strings.Contains(out.String(), `"recommended_next_action": "stage-or-choose-conflict-policy"`) {
+		t.Fatalf("unexpected import plan: %s", out.String())
+	}
+}
+
+func createAgentPlanArchive(t *testing.T, files map[string]string) string {
+	t.Helper()
+	return createDiffArchive(t, files)
+}
