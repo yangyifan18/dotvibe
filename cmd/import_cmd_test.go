@@ -447,3 +447,39 @@ func TestFilterImportEntriesByProjectUsesAdapterFilters(t *testing.T) {
 		t.Fatalf("codex entries should be preserved")
 	}
 }
+
+func TestImportStageWritesReviewWorkspaceWithoutRestoring(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	target := filepath.Join(home, ".codex", "agents", "reviewer.md")
+	writeFileForImportTest(t, target, "local\n")
+	archive := createDiffArchive(t, map[string]string{"codex-cli/agents/reviewer.md": "archive\n"})
+	stageDir := filepath.Join(t.TempDir(), "stage")
+	oldStage, oldStageDir, oldDryRun, oldYes := importStage, importStageDir, importDryRun, importYes
+	oldOnly, oldProject, oldForce, oldBases := importOnly, importProject, importForce, importBases
+	defer func() {
+		importStage, importStageDir, importDryRun, importYes = oldStage, oldStageDir, oldDryRun, oldYes
+		importOnly, importProject, importForce, importBases = oldOnly, oldProject, oldForce, oldBases
+	}()
+	importStage = true
+	importStageDir = stageDir
+	importDryRun = false
+	importYes = false
+	importOnly = ""
+	importProject = ""
+	importForce = false
+	importBases = nil
+	if err := importCmd.RunE(importCmd, []string{archive}); err != nil {
+		t.Fatalf("import --stage: %v", err)
+	}
+	if data, _ := os.ReadFile(target); string(data) != "local\n" {
+		t.Fatalf("stage should not restore target, got %q", string(data))
+	}
+	if _, err := os.Stat(filepath.Join(stageDir, "files", "codex-cli", "agents", "reviewer.md")); err != nil {
+		t.Fatalf("missing staged archive file: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stageDir, "local", "codex-cli", "agents", "reviewer.md")); err != nil {
+		t.Fatalf("missing staged local copy: %v", err)
+	}
+}

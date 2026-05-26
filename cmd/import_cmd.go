@@ -3,19 +3,24 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/agentapi"
 	"github.com/yangyifan18/dotvibe/backup"
 )
 
 var (
-	importYes     bool
-	importOnly    string
-	importProject string
-	importForce   bool
-	importDryRun  bool
-	importBases   []string
+	importYes      bool
+	importOnly     string
+	importProject  string
+	importForce    bool
+	importDryRun   bool
+	importBases    []string
+	importStage    bool
+	importStageDir string
 )
 
 var importCmd = &cobra.Command{
@@ -95,6 +100,32 @@ var importCmd = &cobra.Command{
 			return nil
 		}
 
+		if importStage {
+			stageDir := importStageDir
+			if stageDir == "" {
+				stageDir = filepath.Join("dotvibe-stage-" + time.Now().Format("20060102-150405"))
+			}
+			tmpDir, err := os.MkdirTemp("", "dotvibe-stage-import-*")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmpDir)
+			if err := backup.ExtractArchiveSetFiles(args[0], importBases, tmpDir, selectedFiles); err != nil {
+				return fmt.Errorf("failed to extract archive for staging: %w", err)
+			}
+			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: args[0], Manifest: m, RestorePlan: preview, Bases: importBases})
+			if err != nil {
+				return err
+			}
+			result, err := agentapi.StageImport(agentapi.StageOptions{ArchiveDir: tmpDir, StageDir: stageDir, Plan: plan})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Staged import review workspace: %s\n", result.StageDir)
+			fmt.Printf("  files=%d local_copies=%d plan=%s\n", result.FilesStaged, result.LocalCopies, result.PlanPath)
+			return nil
+		}
+
 		if !importYes {
 			fmt.Print("\nProceed? [Y/n] ")
 			var answer string
@@ -130,6 +161,8 @@ func init() {
 	importCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview restore without writing files")
 	importCmd.Flags().StringSliceVar(&importBases, "base", nil, "base archive for incremental restore; repeat or comma-separate for a chain")
+	importCmd.Flags().BoolVar(&importStage, "stage", false, "stage selected files for agent review without restoring")
+	importCmd.Flags().StringVar(&importStageDir, "stage-dir", "", "stage directory for --stage")
 	rootCmd.AddCommand(importCmd)
 }
 
