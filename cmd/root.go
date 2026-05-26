@@ -28,6 +28,7 @@ Common commands:
   dotvibe recipe diff         Compare two .vibe recipes
   dotvibe recipe apply        Apply a .vibe recipe
   dotvibe rollback            List, run, or prune rollback transactions
+  dotvibe agent               Agent-facing migration helper commands
   dotvibe apply <recipe>      Deprecated alias for recipe apply
   dotvibe setup [archive]     Bootstrap tools and optionally restore`,
 }
