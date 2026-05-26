@@ -106,7 +106,7 @@ func isPrivateCategory(category string) bool {
 func defaultMigrationProfiles() []MigrationProfile {
 	return []MigrationProfile{
 		{ID: "full", Label: "Full migration", Description: "Back up config, memory, skills, agents, and safe defaults", Risk: "private", CommandKind: "export", Notes: []string{"History is excluded unless include_history is selected."}},
-		{ID: "project-memory", Label: "Project memories", Description: "Focus on Claude Code project memory; destination can restore with --project", Risk: "private", CommandKind: "export", Notes: []string{"Current export is archive-level; project filtering is applied during import."}},
+		{ID: "project-memory", Label: "Project memories", Description: "Create a Claude Code archive; destination can restore selected projects with --project", Risk: "private", CommandKind: "export", Notes: []string{"Current export is Claude Code archive-level and may include non-memory Claude files; project filtering is applied during import."}},
 		{ID: "recipe", Label: "Shareable recipe", Description: "Export shareable skills, agents, rules, and safe settings", Risk: "shareable", CommandKind: "recipe-export", Notes: []string{"Personal memory, sessions, transcripts, auth, telemetry, and cache are stripped."}},
 	}
 }

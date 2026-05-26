@@ -19,10 +19,11 @@ Guide users through dotvibe migrations as a choice-driven assistant. Use dotvibe
 
 - Ask choice-style questions; avoid open-ended command prompts.
 - Always run a plan or dry-run before writing.
+- Before direct full-archive imports or `--force`, require either a fresh destination-side backup or a staging workspace the user has reviewed.
 - Never use `--force`, `--yes`, setup installs, or direct import writes without explicit user confirmation.
 - Prefer `dotvibe import --stage` for existing project memory.
 - Do not paste secrets or full private memory into chat unless the user explicitly asks after a warning.
-- After any write, summarize the result and show rollback instructions.
+- After any write, summarize the result and show recovery instructions. Recipe apply creates rollback records; full archive import currently requires the pre-import backup, staged local copies, or manual recovery.
 
 ## Common Entrypoints
 

@@ -74,6 +74,47 @@ func TestRunAgentImportPlanJSON(t *testing.T) {
 	}
 }
 
+func TestRunAgentImportPlanForceReportsOverwrite(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "local\n")
+	archive := createAgentPlanArchive(t, map[string]string{"codex-cli/agents/reviewer.md": "archive\n"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true, Force: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"overwrites": 1`) || !strings.Contains(out.String(), `"action": "overwrite"`) || strings.Contains(out.String(), `"conflicts": 1`) {
+		t.Fatalf("unexpected force import plan: %s", out.String())
+	}
+}
+
+func TestRunAgentImportPlanDetectsIdenticalFiles(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	writeFileForImportTest(t, filepath.Join(home, ".codex", "agents", "reviewer.md"), "same\n")
+	archive := createAgentPlanArchive(t, map[string]string{"codex-cli/agents/reviewer.md": "same\n"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"identical": 1`) || !strings.Contains(out.String(), `"action": "same"`) {
+		t.Fatalf("unexpected identical import plan: %s", out.String())
+	}
+}
+
+func TestRunAgentImportPlanReportsUnsupportedFiles(t *testing.T) {
+	archive := createAgentPlanArchive(t, map[string]string{"unknown-tool/config.json": "{}"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"unsupported": 1`) || !strings.Contains(out.String(), `"recommended_next_action": "fix-unsupported-paths"`) {
+		t.Fatalf("unexpected unsupported import plan: %s", out.String())
+	}
+}
+
 func createAgentPlanArchive(t *testing.T, files map[string]string) string {
 	t.Helper()
 	return createDiffArchive(t, files)
@@ -83,10 +124,10 @@ func TestRunAgentImportPlanValidatesRequiredBases(t *testing.T) {
 	archive, _, expectedDigest := makeIncrementalImportArchivePair(t)
 	var out bytes.Buffer
 	err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out)
-	if err == nil {
-		t.Fatal("expected missing base archive to fail")
+	if err != nil {
+		t.Fatalf("runAgentImportPlan should emit JSON issue for missing base: %v", err)
 	}
-	if !strings.Contains(err.Error(), expectedDigest) {
-		t.Fatalf("error = %q, want base digest %s", err.Error(), expectedDigest)
+	if !strings.Contains(out.String(), `"code": "missing_base_archive"`) || !strings.Contains(out.String(), expectedDigest) || !strings.Contains(out.String(), `"recommended_next_action": "provide-base-archives"`) {
+		t.Fatalf("unexpected missing base plan: %s", out.String())
 	}
 }

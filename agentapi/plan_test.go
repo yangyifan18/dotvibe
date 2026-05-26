@@ -46,6 +46,28 @@ func TestBuildImportPlanDetectsConflicts(t *testing.T) {
 	}
 }
 
+func TestBuildImportPlanReportsOverwriteSeparately(t *testing.T) {
+	manifest := &backup.Manifest{ArchiveKind: backup.ArchiveKindFull, Tools: map[string]backup.ToolManifest{"codex-cli": {Included: []string{adapters.CategoryAgents}, FileCount: 1}}, Files: []backup.FileManifest{{Path: "codex-cli/agents/reviewer.md", ToolID: "codex-cli", Category: adapters.CategoryAgents, Size: 7, SHA256: "archive-sha"}}}
+	plan, err := BuildImportPlan(ImportPlanOptions{Manifest: manifest, RestorePlan: []adapters.RestorePlanEntry{{FileEntry: adapters.FileEntry{InArchive: "codex-cli/agents/reviewer.md", Category: adapters.CategoryAgents}, TargetPath: "/tmp/reviewer.md", Action: adapters.RestoreOverwrite, Reason: "target exists and --force is set"}}})
+	if err != nil {
+		t.Fatalf("BuildImportPlan: %v", err)
+	}
+	if plan.Summary.Overwrites != 1 || plan.Summary.Conflicts != 0 || plan.Entries[0].Action != "overwrite" || plan.RecommendedNextAction != "confirm-overwrite" {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestBuildImportPlanAddsUnsupportedSelectedFiles(t *testing.T) {
+	manifest := &backup.Manifest{ArchiveKind: backup.ArchiveKindFull, Tools: map[string]backup.ToolManifest{"unknown-tool": {Included: []string{adapters.CategoryConfig}, FileCount: 1}}, Files: []backup.FileManifest{{Path: "unknown-tool/config.json", ToolID: "unknown-tool", Category: adapters.CategoryConfig, Size: 2, SHA256: "sha"}}}
+	plan, err := BuildImportPlan(ImportPlanOptions{Manifest: manifest, SelectedFiles: []string{"unknown-tool/config.json"}})
+	if err != nil {
+		t.Fatalf("BuildImportPlan: %v", err)
+	}
+	if plan.Summary.Unsupported != 1 || plan.Entries[0].Action != "unsupported" || plan.RecommendedNextAction != "fix-unsupported-paths" {
+		t.Fatalf("plan = %#v", plan)
+	}
+}
+
 func writeAgentAPITestFile(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
@@ -69,5 +91,12 @@ func TestBuildExportPlanUsesSingleOnlyFlagForMultipleTools(t *testing.T) {
 	}
 	if onlyCount != 1 {
 		t.Fatalf("--only count = %d, command = %#v", onlyCount, plan.Command)
+	}
+}
+
+func TestBuildExportPlanRejectsConflictingProjectMemoryOnlyTools(t *testing.T) {
+	_, err := BuildExportPlan(ExportPlanOptions{Profile: "project-memory", Output: "backup.tar.gz", OnlyTools: []string{"codex-cli"}})
+	if err == nil || !strings.Contains(err.Error(), "project-memory profile only supports claude-code") {
+		t.Fatalf("err = %v", err)
 	}
 }

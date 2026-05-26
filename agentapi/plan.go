@@ -1,7 +1,9 @@
 package agentapi
 
 import (
+	"bytes"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -30,15 +32,19 @@ type ExportPlan struct {
 }
 
 type ImportPlanOptions struct {
-	ArchivePath string
-	Manifest    *backup.Manifest
-	RestorePlan []adapters.RestorePlanEntry
-	Bases       []string
+	ArchivePath   string
+	Manifest      *backup.Manifest
+	RestorePlan   []adapters.RestorePlanEntry
+	Bases         []string
+	SelectedFiles []string
+	ArchiveSet    *backup.ArchiveSet
+	Issues        []AgentIssue
 }
 
 type ImportPlan struct {
 	ArchivePath           string            `json:"archive_path"`
 	ArchiveKind           string            `json:"archive_kind"`
+	BaseArchives          []ImportPlanBase  `json:"base_archives,omitempty"`
 	Summary               ImportPlanSummary `json:"summary"`
 	Entries               []ImportPlanEntry `json:"entries"`
 	Issues                []AgentIssue      `json:"issues"`
@@ -46,11 +52,20 @@ type ImportPlan struct {
 	GeneratedAt           time.Time         `json:"generated_at"`
 }
 
+type ImportPlanBase struct {
+	FileName       string   `json:"file_name"`
+	ManifestSHA256 string   `json:"manifest_sha256"`
+	ProvidedPaths  []string `json:"provided_paths,omitempty"`
+	Resolved       bool     `json:"resolved"`
+	Error          string   `json:"error,omitempty"`
+}
+
 type ImportPlanSummary struct {
 	Total       int `json:"total"`
 	Writes      int `json:"writes"`
 	Identical   int `json:"identical"`
 	Conflicts   int `json:"conflicts"`
+	Overwrites  int `json:"overwrites"`
 	Unsupported int `json:"unsupported"`
 }
 
@@ -62,6 +77,9 @@ type ImportPlanEntry struct {
 	Action      string `json:"action"`
 	Reason      string `json:"reason,omitempty"`
 	NeedsReview bool   `json:"needs_review"`
+	SizeBytes   int64  `json:"size_bytes,omitempty"`
+	SHA256      string `json:"sha256,omitempty"`
+	Storage     string `json:"storage,omitempty"`
 }
 
 func BuildExportPlan(opts ExportPlanOptions) (ExportPlan, error) {
@@ -85,9 +103,12 @@ func BuildExportPlan(opts ExportPlanOptions) (ExportPlan, error) {
 			plan.Command = append(plan.Command, "--base", opts.BaseArchive)
 		}
 	case "project-memory":
+		if hasNonClaudeOnlyTool(opts.OnlyTools) {
+			return ExportPlan{}, fmt.Errorf("project-memory profile only supports claude-code")
+		}
 		plan.Risk = "private"
 		plan.Command = []string{"dotvibe", "export", "--only", "claude-code", "-o", out}
-		plan.Notes = append(plan.Notes, "Project selection is applied during destination import with --project.")
+		plan.Notes = append(plan.Notes, "This creates a Claude Code archive; project selection is applied during destination import with --project.")
 	case "recipe":
 		plan.Risk = "shareable"
 		plan.Command = []string{"dotvibe", "recipe", "export", "-o", out}
@@ -100,10 +121,19 @@ func BuildExportPlan(opts ExportPlanOptions) (ExportPlan, error) {
 	default:
 		return ExportPlan{}, fmt.Errorf("unsupported export profile %q", opts.Profile)
 	}
-	if len(opts.OnlyTools) > 0 {
+	if len(opts.OnlyTools) > 0 && profile != "project-memory" {
 		plan.Command = append(plan.Command, "--only", strings.Join(opts.OnlyTools, ","))
 	}
 	return plan, nil
+}
+
+func hasNonClaudeOnlyTool(tools []string) bool {
+	for _, tool := range tools {
+		if tool != "" && tool != "claude-code" {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultAgentExportOutput(profile string) string {
@@ -118,34 +148,88 @@ func BuildImportPlan(opts ImportPlanOptions) (ImportPlan, error) {
 	if opts.Manifest == nil {
 		return ImportPlan{}, fmt.Errorf("manifest is required")
 	}
-	plan := ImportPlan{ArchivePath: opts.ArchivePath, ArchiveKind: opts.Manifest.ArchiveKind, Entries: []ImportPlanEntry{}, Issues: []AgentIssue{}, GeneratedAt: time.Now().UTC()}
+	opts.Manifest.Normalize()
+	plan := ImportPlan{ArchivePath: opts.ArchivePath, ArchiveKind: opts.Manifest.ArchiveKind, Entries: []ImportPlanEntry{}, Issues: append([]AgentIssue{}, opts.Issues...), GeneratedAt: time.Now().UTC()}
 	if plan.ArchiveKind == "" {
 		plan.ArchiveKind = backup.ArchiveKindFull
 	}
+	plan.BaseArchives = importPlanBases(opts.Manifest, opts.Bases, opts.Issues)
+	filesByPath := importPlanFilesByPath(opts.Manifest)
+	seen := map[string]struct{}{}
 	for _, restore := range opts.RestorePlan {
 		entry := ImportPlanEntry{Path: restore.InArchive, ToolID: archiveToolIDForAgent(restore.InArchive), Category: restore.Category, TargetPath: restore.TargetPath, Action: importPlanAction(restore), Reason: restore.Reason}
+		if file, ok := filesByPath[restore.InArchive]; ok {
+			enrichImportPlanEntry(&entry, file)
+		}
+		if same, err := importPlanEntryMatchesTarget(opts.ArchiveSet, restore); err != nil {
+			plan.Issues = append(plan.Issues, AgentIssue{Severity: "warning", Code: "compare_failed", Message: err.Error()})
+		} else if same {
+			entry.Action = "same"
+			entry.Reason = "target content matches archive"
+		}
 		entry.NeedsReview = entry.Action == "conflict"
 		plan.Entries = append(plan.Entries, entry)
-		plan.Summary.Total++
-		switch entry.Action {
-		case "write":
-			plan.Summary.Writes++
-		case "same":
-			plan.Summary.Identical++
-		case "conflict":
-			plan.Summary.Conflicts++
-		case "unsupported":
-			plan.Summary.Unsupported++
+		seen[entry.Path] = struct{}{}
+		addImportPlanSummary(&plan.Summary, entry.Action)
+	}
+	for _, selected := range opts.SelectedFiles {
+		if _, ok := seen[selected]; ok {
+			continue
+		}
+		entry := unsupportedImportPlanEntry(selected, filesByPath[selected], "unsupported tool or archive path")
+		plan.Entries = append(plan.Entries, entry)
+		addImportPlanSummary(&plan.Summary, entry.Action)
+	}
+	plan.RecommendedNextAction = recommendedImportPlanAction(plan)
+	return plan, nil
+}
+
+func importPlanBases(m *backup.Manifest, provided []string, issues []AgentIssue) []ImportPlanBase {
+	if m == nil || m.Base == nil {
+		return nil
+	}
+	base := ImportPlanBase{
+		FileName:       m.Base.FileName,
+		ManifestSHA256: m.Base.ManifestSHA256,
+		ProvidedPaths:  append([]string{}, provided...),
+		Resolved:       !hasImportPlanIssue(issues, "missing_base_archive"),
+	}
+	if !base.Resolved {
+		base.Error = "required base archive is missing or incomplete"
+	}
+	return []ImportPlanBase{base}
+}
+
+func hasImportPlanIssue(issues []AgentIssue, code string) bool {
+	for _, issue := range issues {
+		if issue.Code == code {
+			return true
 		}
 	}
-	plan.RecommendedNextAction = "safe-to-import"
-	if plan.Summary.Conflicts > 0 {
-		plan.RecommendedNextAction = "stage-or-choose-conflict-policy"
+	return false
+}
+
+func importPlanFilesByPath(m *backup.Manifest) map[string]backup.FileManifest {
+	out := map[string]backup.FileManifest{}
+	if m == nil {
+		return out
 	}
-	if plan.Summary.Unsupported > 0 {
-		plan.RecommendedNextAction = "fix-unsupported-paths"
+	for _, file := range m.Files {
+		out[file.Path] = file
 	}
-	return plan, nil
+	return out
+}
+
+func enrichImportPlanEntry(entry *ImportPlanEntry, file backup.FileManifest) {
+	if file.ToolID != "" {
+		entry.ToolID = file.ToolID
+	}
+	if file.Category != "" {
+		entry.Category = file.Category
+	}
+	entry.SizeBytes = file.Size
+	entry.SHA256 = file.SHA256
+	entry.Storage = file.Storage
 }
 
 func importPlanAction(entry adapters.RestorePlanEntry) string {
@@ -153,15 +237,82 @@ func importPlanAction(entry adapters.RestorePlanEntry) string {
 	case adapters.RestoreWrite:
 		return "write"
 	case adapters.RestoreOverwrite:
-		return "conflict"
+		return "overwrite"
 	case adapters.RestoreSkip:
 		if entry.Reason == "target content matches archive" {
 			return "same"
 		}
 		return "conflict"
+	case adapters.RestoreUnsupported:
+		return "unsupported"
 	default:
 		return "unsupported"
 	}
+}
+
+func importPlanEntryMatchesTarget(set *backup.ArchiveSet, entry adapters.RestorePlanEntry) (bool, error) {
+	if set == nil || entry.TargetPath == "" {
+		return false, nil
+	}
+	targetData, err := os.ReadFile(entry.TargetPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("failed to read target %s: %w", entry.TargetPath, err)
+	}
+	archiveData, err := set.ReadFile(entry.InArchive)
+	if err != nil {
+		return false, fmt.Errorf("failed to read archive file %s: %w", entry.InArchive, err)
+	}
+	return bytes.Equal(targetData, archiveData), nil
+}
+
+func unsupportedImportPlanEntry(path string, file backup.FileManifest, reason string) ImportPlanEntry {
+	entry := ImportPlanEntry{Path: path, ToolID: archiveToolIDForAgent(path), Category: file.Category, Action: "unsupported", Reason: reason}
+	enrichImportPlanEntry(&entry, file)
+	if entry.ToolID == "" {
+		entry.ToolID = archiveToolIDForAgent(path)
+	}
+	return entry
+}
+
+func addImportPlanSummary(summary *ImportPlanSummary, action string) {
+	summary.Total++
+	switch action {
+	case "write":
+		summary.Writes++
+	case "same":
+		summary.Identical++
+	case "conflict":
+		summary.Conflicts++
+	case "overwrite":
+		summary.Overwrites++
+	case "unsupported":
+		summary.Unsupported++
+	}
+}
+
+func recommendedImportPlanAction(plan ImportPlan) string {
+	for _, issue := range plan.Issues {
+		if issue.Severity != "error" {
+			continue
+		}
+		if issue.Code == "missing_base_archive" {
+			return "provide-base-archives"
+		}
+		return "resolve-plan-issues"
+	}
+	if plan.Summary.Unsupported > 0 {
+		return "fix-unsupported-paths"
+	}
+	if plan.Summary.Conflicts > 0 {
+		return "stage-or-choose-conflict-policy"
+	}
+	if plan.Summary.Overwrites > 0 {
+		return "confirm-overwrite"
+	}
+	return "safe-to-import"
 }
 
 func archiveToolIDForAgent(path string) string {

@@ -7,5 +7,7 @@
 - Ask before installer commands.
 - Ask before `--yes` and `--force`.
 - Prefer staging when conflicts exist.
-- After writes, tell the user how to inspect rollback records.
-- Stop if dotvibe reports checksum, path traversal, missing base archive, or lint errors unless the user explicitly chooses a documented override.
+- Before direct full-archive imports or `--force`, require a fresh destination backup or staged local copies.
+- After writes, explain recovery: recipe apply has rollback records; full archive import relies on the pre-import backup, staged copies, or manual recovery.
+- Stop and do not override checksum failures, path traversal errors, or missing base archives.
+- For recipe lint errors only, stop unless the user explicitly chooses the documented `--allow-risk` override after seeing the lint report.

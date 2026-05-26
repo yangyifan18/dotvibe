@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -170,23 +171,78 @@ func runAgentImportPlan(path string, opts agentImportPlanOptions, w io.Writer) e
 	}
 	defer ar.Close()
 	set, err := backup.OpenArchiveSetForFiles(path, opts.Bases, selectedFiles)
+	var issues []agentapi.AgentIssue
 	if err != nil {
-		return fmt.Errorf("failed to read archive: %w", err)
+		issues = append(issues, agentapi.AgentIssue{Severity: "error", Code: importPlanArchiveSetIssueCode(err), Message: err.Error()})
+		if !opts.JSON {
+			return fmt.Errorf("failed to read archive: %w", err)
+		}
+	} else {
+		defer set.Close()
 	}
-	defer set.Close()
-	preview, err := buildRestorePreview(toolFiles, adapters.RestoreOpts{Force: opts.Force, Project: opts.Project})
-	if err != nil {
-		return err
-	}
-	plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: path, Manifest: ar.Manifest, RestorePlan: preview, Bases: opts.Bases})
+	preview := buildAgentRestorePreview(toolFiles, adapters.RestoreOpts{Force: opts.Force, Project: opts.Project})
+	plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: path, Manifest: ar.Manifest, RestorePlan: preview, Bases: opts.Bases, SelectedFiles: selectedFiles, ArchiveSet: set, Issues: issues})
 	if err != nil {
 		return err
 	}
 	if opts.JSON {
 		return writeAgentJSON(w, plan)
 	}
-	fmt.Fprintf(w, "Import plan: total=%d writes=%d conflicts=%d action=%s\n", plan.Summary.Total, plan.Summary.Writes, plan.Summary.Conflicts, plan.RecommendedNextAction)
+	fmt.Fprintf(w, "Import plan: total=%d writes=%d conflicts=%d overwrites=%d unsupported=%d action=%s\n", plan.Summary.Total, plan.Summary.Writes, plan.Summary.Conflicts, plan.Summary.Overwrites, plan.Summary.Unsupported, plan.RecommendedNextAction)
 	return nil
+}
+
+func importPlanArchiveSetIssueCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "base archive") || strings.Contains(msg, "base-backed") {
+		return "missing_base_archive"
+	}
+	return "archive_set_error"
+}
+
+func buildAgentRestorePreview(toolFiles map[string][]adapters.FileEntry, opts adapters.RestoreOpts) []adapters.RestorePlanEntry {
+	var preview []adapters.RestorePlanEntry
+	handled := map[string]struct{}{}
+	for _, adapter := range adapters.AllAdapters() {
+		entries, ok := toolFiles[adapter.ID()]
+		if !ok {
+			continue
+		}
+		handled[adapter.ID()] = struct{}{}
+		for _, entry := range entries {
+			plan, err := adapter.PlanRestore([]adapters.FileEntry{entry}, opts)
+			if err != nil {
+				preview = append(preview, unsupportedRestorePlanEntry(entry, err.Error()))
+				continue
+			}
+			preview = append(preview, plan...)
+		}
+	}
+	var unknownTools []string
+	for toolID := range toolFiles {
+		if _, ok := handled[toolID]; !ok {
+			unknownTools = append(unknownTools, toolID)
+		}
+	}
+	sort.Strings(unknownTools)
+	for _, toolID := range unknownTools {
+		for _, entry := range toolFiles[toolID] {
+			preview = append(preview, unsupportedRestorePlanEntry(entry, "unsupported tool: "+toolID))
+		}
+	}
+	return preview
+}
+
+func unsupportedRestorePlanEntry(entry adapters.FileEntry, reason string) adapters.RestorePlanEntry {
+	return adapters.RestorePlanEntry{
+		FileEntry:  entry,
+		Action:     adapters.RestoreUnsupported,
+		Reason:     reason,
+		TargetPath: "",
+	}
 }
 
 func readImportPlanArchive(path string, opts agentImportPlanOptions) (*backup.ArchiveReader, map[string][]adapters.FileEntry, []string, error) {

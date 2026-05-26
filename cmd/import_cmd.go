@@ -90,9 +90,14 @@ var importCmd = &cobra.Command{
 			Force:   importForce,
 			Project: importProject,
 		}
-		preview, err := buildRestorePreview(toolFiles, opts)
-		if err != nil {
-			return err
+		var preview []adapters.RestorePlanEntry
+		if importStage {
+			preview = buildAgentRestorePreview(toolFiles, opts)
+		} else {
+			preview, err = buildRestorePreview(toolFiles, opts)
+			if err != nil {
+				return err
+			}
 		}
 		printRestorePreview(preview)
 		if importDryRun {
@@ -113,11 +118,11 @@ var importCmd = &cobra.Command{
 			if err := backup.ExtractArchiveSetFiles(args[0], importBases, tmpDir, selectedFiles); err != nil {
 				return fmt.Errorf("failed to extract archive for staging: %w", err)
 			}
-			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: args[0], Manifest: m, RestorePlan: preview, Bases: importBases})
+			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: args[0], Manifest: m, RestorePlan: preview, Bases: importBases, SelectedFiles: selectedFiles, ArchiveSet: set})
 			if err != nil {
 				return err
 			}
-			result, err := agentapi.StageImport(agentapi.StageOptions{ArchiveDir: tmpDir, StageDir: stageDir, Plan: plan})
+			result, err := agentapi.StageImport(agentapi.StageOptions{ArchiveDir: tmpDir, StageDir: stageDir, Plan: plan, Manifest: m})
 			if err != nil {
 				return err
 			}
@@ -202,16 +207,23 @@ func flattenImportFiles(toolFiles map[string][]adapters.FileEntry) []string {
 
 func buildRestorePreview(toolFiles map[string][]adapters.FileEntry, opts adapters.RestoreOpts) ([]adapters.RestorePlanEntry, error) {
 	var preview []adapters.RestorePlanEntry
+	handled := map[string]struct{}{}
 	for _, adapter := range adapters.AllAdapters() {
 		entries, ok := toolFiles[adapter.ID()]
 		if !ok {
 			continue
 		}
+		handled[adapter.ID()] = struct{}{}
 		plan, err := adapter.PlanRestore(entries, opts)
 		if err != nil {
 			return nil, err
 		}
 		preview = append(preview, plan...)
+	}
+	for toolID := range toolFiles {
+		if _, ok := handled[toolID]; !ok {
+			return nil, fmt.Errorf("unsupported archive tool: %s", toolID)
+		}
 	}
 	return preview, nil
 }

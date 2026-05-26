@@ -19,9 +19,10 @@ type FileEntry struct {
 }
 
 const (
-	RestoreWrite     = "write"
-	RestoreSkip      = "skip"
-	RestoreOverwrite = "overwrite"
+	RestoreWrite       = "write"
+	RestoreSkip        = "skip"
+	RestoreOverwrite   = "overwrite"
+	RestoreUnsupported = "unsupported"
 )
 
 type ExportOpts struct {

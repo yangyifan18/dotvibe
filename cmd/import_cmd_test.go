@@ -482,4 +482,36 @@ func TestImportStageWritesReviewWorkspaceWithoutRestoring(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(stageDir, "local", "codex-cli", "agents", "reviewer.md")); err != nil {
 		t.Fatalf("missing staged local copy: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(stageDir, "manifest.json")); err != nil {
+		t.Fatalf("missing staged manifest: %v", err)
+	}
+}
+
+func TestImportStageRejectsExistingStageWorkspace(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	archive := createDiffArchive(t, map[string]string{"codex-cli/agents/reviewer.md": "archive\n"})
+	stageDir := filepath.Join(t.TempDir(), "stage")
+	if err := os.Mkdir(stageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	oldStage, oldStageDir, oldDryRun, oldYes := importStage, importStageDir, importDryRun, importYes
+	oldOnly, oldProject, oldForce, oldBases := importOnly, importProject, importForce, importBases
+	defer func() {
+		importStage, importStageDir, importDryRun, importYes = oldStage, oldStageDir, oldDryRun, oldYes
+		importOnly, importProject, importForce, importBases = oldOnly, oldProject, oldForce, oldBases
+	}()
+	importStage = true
+	importStageDir = stageDir
+	importDryRun = false
+	importYes = false
+	importOnly = ""
+	importProject = ""
+	importForce = false
+	importBases = nil
+	err := importCmd.RunE(importCmd, []string{archive})
+	if err == nil || !strings.Contains(err.Error(), "stage dir already exists") {
+		t.Fatalf("err = %v", err)
+	}
 }

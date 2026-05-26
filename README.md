@@ -136,6 +136,14 @@ dotvibe export --with-history
 
 DotVibe is designed to be driven by an agent. Instead of memorizing every command, install the Codex skill from `agent/codex/dotvibe-migration/` and ask:
 
+```bash
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_HOME/skills/dotvibe-migration"
+cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
+```
+
+Restart Codex or reload skills, then ask:
+
 ```text
 Help me migrate my vibe coding setup with dotvibe.
 ```

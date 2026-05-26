@@ -122,6 +122,14 @@ dotvibe export --with-history
 
 DotVibe 的推荐用法是交给 agent 驱动。你不需要记住所有命令；安装 `agent/codex/dotvibe-migration/` 里的 Codex skill 后，对 agent 说：
 
+```bash
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_HOME/skills/dotvibe-migration"
+cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
+```
+
+重启 Codex 或重新加载 skills，然后说：
+
 ```text
 Help me migrate my vibe coding setup with dotvibe.
 ```
