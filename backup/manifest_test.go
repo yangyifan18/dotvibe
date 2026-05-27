@@ -2,6 +2,7 @@ package backup
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -184,5 +185,52 @@ func TestReadManifest_MissingFile(t *testing.T) {
 	_, err := ReadManifest("/nonexistent/manifest.json")
 	if err == nil {
 		t.Error("expected error for missing file")
+	}
+}
+
+func TestManifestProjectMetadataRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "manifest.json")
+	m := &Manifest{
+		Version:       "1.0.0",
+		FormatVersion: 2,
+		ArchiveKind:   ArchiveKindFull,
+		SourceHome:    "/Users/young",
+		SourceUser:    "young",
+		Tools:         map[string]ToolManifest{"claude-code": {Included: []string{"memory"}, FileCount: 1}},
+		Projects: []ProjectManifest{{
+			ToolID:         "claude-code",
+			ProjectKey:     "-Users-young-Softwares-dotvibe",
+			SourcePath:     "/Users/young/Softwares/dotvibe",
+			SourceHome:     "/Users/young",
+			RelativeToHome: "Softwares/dotvibe",
+			PathScope:      ProjectPathScopeHome,
+			MemoryFiles:    []string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md"},
+			Git: ProjectGitMetadata{
+				IsRepo:       true,
+				WorktreeRoot: "/Users/young/Softwares/dotvibe",
+				Branch:       "main",
+				Head:         "abc123",
+				Dirty:        false,
+				Remotes: []ProjectGitRemote{{
+					Name:      "origin",
+					URL:       "git@github.com:yangyifan18/dotvibe.git",
+					Sanitized: true,
+					Cloneable: true,
+				}},
+			},
+		}},
+	}
+	if err := WriteManifest(path, m); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	got, err := ReadManifest(path)
+	if err != nil {
+		t.Fatalf("ReadManifest: %v", err)
+	}
+	if got.SourceHome != "/Users/young" || got.SourceUser != "young" {
+		t.Fatalf("source metadata = %#v", got)
+	}
+	if len(got.Projects) != 1 || got.Projects[0].RelativeToHome != "Softwares/dotvibe" || got.Projects[0].Git.Remotes[0].URL != "git@github.com:yangyifan18/dotvibe.git" {
+		t.Fatalf("projects = %#v", got.Projects)
 	}
 }
