@@ -19,9 +19,10 @@ type FileEntry struct {
 }
 
 const (
-	RestoreWrite     = "write"
-	RestoreSkip      = "skip"
-	RestoreOverwrite = "overwrite"
+	RestoreWrite       = "write"
+	RestoreSkip        = "skip"
+	RestoreOverwrite   = "overwrite"
+	RestoreUnsupported = "unsupported"
 )
 
 type ExportOpts struct {
@@ -48,8 +49,9 @@ type ToolStatus struct {
 }
 
 type RestoreOpts struct {
-	Force   bool
-	Project string
+	Force            bool
+	Project          string
+	ProjectKeyRemaps map[string]string
 }
 
 type RestorePlanEntry struct {

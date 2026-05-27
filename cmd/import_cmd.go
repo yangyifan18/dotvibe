@@ -3,19 +3,26 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/yangyifan18/dotvibe/adapters"
+	"github.com/yangyifan18/dotvibe/agentapi"
 	"github.com/yangyifan18/dotvibe/backup"
 )
 
 var (
-	importYes     bool
-	importOnly    string
-	importProject string
-	importForce   bool
-	importDryRun  bool
-	importBases   []string
+	importYes            bool
+	importOnly           string
+	importProject        string
+	importForce          bool
+	importDryRun         bool
+	importBases          []string
+	importStage          bool
+	importStageDir       string
+	importRemapHome      bool
+	importProjectTargets []string
 )
 
 var importCmd = &cobra.Command{
@@ -81,17 +88,67 @@ var importCmd = &cobra.Command{
 		if importProject != "" {
 			fmt.Printf("Project filter: %s\n", adapters.ClaudeProjectKey(importProject))
 		}
-		opts := adapters.RestoreOpts{
-			Force:   importForce,
-			Project: importProject,
-		}
-		preview, err := buildRestorePreview(toolFiles, opts)
+		destHome, destUser := currentDestinationIdentity()
+		projectTargets, err := parseProjectTargets(importProjectTargets)
 		if err != nil {
 			return err
+		}
+		keyRemaps := projectKeyRemapsForManifest(m, destHome, destUser, importRemapHome, projectTargets)
+		opts := adapters.RestoreOpts{
+			Force:            importForce,
+			Project:          importProject,
+			ProjectKeyRemaps: keyRemaps,
+		}
+		var preview []adapters.RestorePlanEntry
+		if importStage {
+			preview = buildAgentRestorePreview(toolFiles, opts)
+		} else {
+			preview, err = buildRestorePreview(toolFiles, opts)
+			if err != nil {
+				return err
+			}
 		}
 		printRestorePreview(preview)
 		if importDryRun {
 			fmt.Println("Dry run: no files restored.")
+			return nil
+		}
+
+		if importStage {
+			stageDir := importStageDir
+			if stageDir == "" {
+				stageDir = filepath.Join("dotvibe-stage-" + time.Now().Format("20060102-150405"))
+			}
+			tmpDir, err := os.MkdirTemp("", "dotvibe-stage-import-*")
+			if err != nil {
+				return err
+			}
+			defer os.RemoveAll(tmpDir)
+			if err := backup.ExtractArchiveSetFiles(args[0], importBases, tmpDir, selectedFiles); err != nil {
+				return fmt.Errorf("failed to extract archive for staging: %w", err)
+			}
+			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{
+				ArchivePath:      args[0],
+				Manifest:         m,
+				RestorePlan:      preview,
+				Bases:            importBases,
+				SelectedFiles:    selectedFiles,
+				ArchiveSet:       set,
+				DestinationHome:  destHome,
+				DestinationUser:  destUser,
+				ProjectTargets:   projectTargets,
+				EnableHomeRemap:  importRemapHome,
+				ProjectKeyRemaps: keyRemaps,
+			})
+			if err != nil {
+				return err
+			}
+			result, err := agentapi.StageImport(agentapi.StageOptions{ArchiveDir: tmpDir, StageDir: stageDir, Plan: plan, Manifest: m})
+			if err != nil {
+				return err
+			}
+			fmt.Printf("Staged import review workspace: %s\n", result.StageDir)
+			fmt.Printf("  files=%d local_copies=%d plan=%s\n", result.FilesStaged, result.LocalCopies, result.PlanPath)
 			return nil
 		}
 
@@ -130,6 +187,10 @@ func init() {
 	importCmd.Flags().BoolVar(&importForce, "force", false, "overwrite existing files")
 	importCmd.Flags().BoolVar(&importDryRun, "dry-run", false, "preview restore without writing files")
 	importCmd.Flags().StringSliceVar(&importBases, "base", nil, "base archive for incremental restore; repeat or comma-separate for a chain")
+	importCmd.Flags().BoolVar(&importStage, "stage", false, "stage selected files for agent review without restoring")
+	importCmd.Flags().StringVar(&importStageDir, "stage-dir", "", "stage directory for --stage")
+	importCmd.Flags().BoolVar(&importRemapHome, "remap-home", false, "remap Claude project memory from source home to current home")
+	importCmd.Flags().StringSliceVar(&importProjectTargets, "project-target", nil, "project target override source-key=target-path")
 	rootCmd.AddCommand(importCmd)
 }
 
@@ -169,16 +230,23 @@ func flattenImportFiles(toolFiles map[string][]adapters.FileEntry) []string {
 
 func buildRestorePreview(toolFiles map[string][]adapters.FileEntry, opts adapters.RestoreOpts) ([]adapters.RestorePlanEntry, error) {
 	var preview []adapters.RestorePlanEntry
+	handled := map[string]struct{}{}
 	for _, adapter := range adapters.AllAdapters() {
 		entries, ok := toolFiles[adapter.ID()]
 		if !ok {
 			continue
 		}
+		handled[adapter.ID()] = struct{}{}
 		plan, err := adapter.PlanRestore(entries, opts)
 		if err != nil {
 			return nil, err
 		}
 		preview = append(preview, plan...)
+	}
+	for toolID := range toolFiles {
+		if _, ok := handled[toolID]; !ok {
+			return nil, fmt.Errorf("unsupported archive tool: %s", toolID)
+		}
 	}
 	return preview, nil
 }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -187,5 +188,63 @@ func TestCreateArchiveFromExportPlanWritesIncrementalMetadata(t *testing.T) {
 	}
 	if delta.Manifest.Base.ManifestSHA256 != baseDigest {
 		t.Fatalf("base digest = %q, want %q", delta.Manifest.Base.ManifestSHA256, baseDigest)
+	}
+}
+
+func TestExportIncludesClaudeProjectMetadata(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	projectPath := filepath.Join(home, "Softwares", "dotvibe")
+	if err := os.MkdirAll(projectPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGitForExportTest(t, projectPath, "init")
+	runGitForExportTest(t, projectPath, "remote", "add", "origin", "https://token@github.com/yangyifan18/dotvibe.git")
+	projectKey := adapters.ClaudeProjectKey(projectPath)
+	writeFileForImportTest(t, filepath.Join(home, ".claude", "projects", projectKey, "CLAUDE.md"), "# memory\n")
+
+	oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase := exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase
+	defer func() {
+		exportOutput, exportForce, exportOnly, exportWithHist, exportExcludes, exportBase = oldOutput, oldForce, oldOnly, oldHist, oldExcludes, oldBase
+	}()
+	archive := filepath.Join(t.TempDir(), "backup.tar.gz")
+	exportOutput = archive
+	exportForce = false
+	exportOnly = "claude-code"
+	exportWithHist = false
+	exportExcludes = nil
+	exportBase = ""
+
+	if err := exportCmd.RunE(exportCmd, nil); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	ar, err := backup.ReadArchive(archive)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ar.Close()
+	if ar.Manifest.SourceHome != home {
+		t.Fatalf("source home = %q, want %q", ar.Manifest.SourceHome, home)
+	}
+	if len(ar.Manifest.Projects) != 1 {
+		t.Fatalf("projects = %#v", ar.Manifest.Projects)
+	}
+	project := ar.Manifest.Projects[0]
+	if project.ProjectKey != projectKey || project.RelativeToHome != "Softwares/dotvibe" {
+		t.Fatalf("project = %#v", project)
+	}
+	if len(project.Git.Remotes) != 1 || project.Git.Remotes[0].URL != "https://github.com/yangyifan18/dotvibe.git" || !project.Git.Remotes[0].CredentialsRedacted {
+		t.Fatalf("remote = %#v", project.Git.Remotes)
+	}
+}
+
+func runGitForExportTest(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

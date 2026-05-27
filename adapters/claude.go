@@ -259,7 +259,7 @@ func (a *ClaudeAdapter) PlanRestore(entries []FileEntry, opts RestoreOpts) ([]Re
 	entries = a.FilterRestoreEntries(entries, opts)
 	plans := make([]RestorePlanEntry, 0, len(entries))
 	for _, entry := range entries {
-		destPath, err := a.adaptPath(entry.InArchive)
+		destPath, err := a.adaptPathWithRestoreOpts(entry.InArchive, opts)
 		if err != nil {
 			return nil, err
 		}
@@ -276,6 +276,21 @@ func (a *ClaudeAdapter) PlanRestore(entries []FileEntry, opts RestoreOpts) ([]Re
 		plans = append(plans, plan)
 	}
 	return plans, nil
+}
+
+func (a *ClaudeAdapter) adaptPathWithRestoreOpts(archivePath string, opts RestoreOpts) (string, error) {
+	if !strings.HasPrefix(archivePath, "claude-code/projects/") || len(opts.ProjectKeyRemaps) == 0 {
+		return a.adaptPath(archivePath)
+	}
+	rel := strings.TrimPrefix(archivePath, "claude-code/projects/")
+	parts := strings.SplitN(rel, "/", 2)
+	if len(parts) < 2 {
+		return "", fmt.Errorf("unsupported Claude project archive path: %s", archivePath)
+	}
+	if targetKey, ok := opts.ProjectKeyRemaps[parts[0]]; ok && targetKey != "" {
+		return filepath.Join(a.baseDir(), "projects", targetKey, parts[1]), nil
+	}
+	return a.adaptPath(archivePath)
 }
 
 func (a *ClaudeAdapter) RestoreFiles(entries []FileEntry, archiveDir string, opts RestoreOpts) (RestoreSummary, error) {

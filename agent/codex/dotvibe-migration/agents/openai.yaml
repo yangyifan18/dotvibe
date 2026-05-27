@@ -1,0 +1,3 @@
+display_name: DotVibe Migration
+short_description: Guide safe dotvibe export, transfer, import, recipe, and project-memory merge workflows.
+default_prompt: Help me migrate my vibe coding setup with dotvibe.

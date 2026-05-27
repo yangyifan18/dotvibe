@@ -64,3 +64,24 @@ func writeRecipeTestFile(t *testing.T, path string, content string) {
 		t.Fatal(err)
 	}
 }
+
+func TestBuildArchiveDoesNotCarryProjectMetadata(t *testing.T) {
+	dir := t.TempDir()
+	agent := filepath.Join(dir, "reviewer.md")
+	if err := os.WriteFile(agent, []byte("# reviewer\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "recipe.vibe")
+	_, err := BuildArchive(out, []adapters.FileEntry{{SourcePath: agent, InArchive: "codex-cli/agents/reviewer.md", Category: adapters.CategoryAgents}}, ExportOptions{Name: "Recipe"})
+	if err != nil {
+		t.Fatalf("BuildArchive: %v", err)
+	}
+	ar, err := backup.ReadArchive(out)
+	if err != nil {
+		t.Fatalf("ReadArchive: %v", err)
+	}
+	defer ar.Close()
+	if ar.Manifest.SourceHome != "" || ar.Manifest.SourceUser != "" || len(ar.Manifest.Projects) != 0 {
+		t.Fatalf("recipe should not carry project metadata: %#v", ar.Manifest)
+	}
+}

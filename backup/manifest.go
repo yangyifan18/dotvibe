@@ -23,10 +23,47 @@ type Manifest struct {
 	ArchiveKind   string                  `json:"archive_kind,omitempty"`
 	Created       time.Time               `json:"created"`
 	Hostname      string                  `json:"hostname"`
+	SourceHome    string                  `json:"source_home,omitempty"`
+	SourceUser    string                  `json:"source_user,omitempty"`
 	Base          *BaseArchiveRef         `json:"base,omitempty"`
 	Recipe        *RecipeMetadata         `json:"recipe,omitempty"`
 	Tools         map[string]ToolManifest `json:"tools"`
 	Files         []FileManifest          `json:"files,omitempty"`
+	Projects      []ProjectManifest       `json:"projects,omitempty"`
+}
+
+const (
+	ProjectPathScopeHome        = "home"
+	ProjectPathScopeOutsideHome = "outside_home"
+)
+
+type ProjectManifest struct {
+	ToolID         string             `json:"tool_id"`
+	ProjectKey     string             `json:"project_key"`
+	SourcePath     string             `json:"source_path,omitempty"`
+	SourceHome     string             `json:"source_home,omitempty"`
+	RelativeToHome string             `json:"relative_to_home,omitempty"`
+	PathScope      string             `json:"path_scope,omitempty"`
+	MemoryFiles    []string           `json:"memory_files,omitempty"`
+	Git            ProjectGitMetadata `json:"git,omitempty"`
+}
+
+type ProjectGitMetadata struct {
+	IsRepo       bool               `json:"is_repo"`
+	WorktreeRoot string             `json:"worktree_root,omitempty"`
+	Branch       string             `json:"branch,omitempty"`
+	Head         string             `json:"head,omitempty"`
+	Dirty        bool               `json:"dirty,omitempty"`
+	Remotes      []ProjectGitRemote `json:"remotes,omitempty"`
+}
+
+type ProjectGitRemote struct {
+	Name                string `json:"name"`
+	URL                 string `json:"url"`
+	Sanitized           bool   `json:"sanitized"`
+	Cloneable           bool   `json:"cloneable"`
+	CredentialsRedacted bool   `json:"credentials_redacted,omitempty"`
+	Reason              string `json:"reason,omitempty"`
 }
 
 type RecipeMetadata struct {

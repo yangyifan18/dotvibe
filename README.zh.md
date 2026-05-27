@@ -118,6 +118,26 @@ dotvibe diff --json old.tar.gz new.tar.gz
 dotvibe export --with-history
 ```
 
+## Agent 辅助迁移
+
+DotVibe 的推荐用法是交给 agent 驱动。你不需要记住所有命令；安装 `agent/codex/dotvibe-migration/` 里的 Codex skill 后，对 agent 说：
+
+```bash
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_HOME/skills/dotvibe-migration"
+cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
+```
+
+重启 Codex 或重新加载 skills，然后说：
+
+```text
+Help me migrate my vibe coding setup with dotvibe.
+```
+
+Agent 会调用 `dotvibe agent doctor --json`、`dotvibe agent inventory --json`、导出/导入 plan、dry-run 和 staging workspace，引导你做选择。遇到项目 memory 冲突时，agent 会先把归档版本和本地版本 stage 出来，让你 review 或 merge，再写入真实工具目录。
+
+对于项目 memory，agent 辅助导入会处理 macOS 用户名变化。比如旧备份来自 `/Users/young/Softwares/dotvibe`，新机器会规划到 `/Users/youtopia/Softwares/dotvibe`。如果新机器还没有这个项目，agent 会展示备份 metadata 里的 sanitized `git clone` 命令并先询问；如果项目已存在，agent 会先询问是否加载旧 memory，遇到冲突则 stage 后 review。
+
 ## Vibe Recipes
 
 Recipe 用来把一套 vibe coding 配置分享给同事或社区。它会剥离个人数据，只保留 Claude Code skills、Codex agents、全局规则和安全 settings 等可共享内容。

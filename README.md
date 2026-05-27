@@ -132,6 +132,26 @@ dotvibe diff --json old.tar.gz new.tar.gz
 dotvibe export --with-history
 ```
 
+## Agent-Assisted Migration
+
+DotVibe is designed to be driven by an agent. Instead of memorizing every command, install the Codex skill from `agent/codex/dotvibe-migration/` and ask:
+
+```bash
+CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
+mkdir -p "$CODEX_HOME/skills/dotvibe-migration"
+cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
+```
+
+Restart Codex or reload skills, then ask:
+
+```text
+Help me migrate my vibe coding setup with dotvibe.
+```
+
+The agent uses `dotvibe agent doctor --json`, `dotvibe agent inventory --json`, export/import plans, dry-runs, and staging workspaces to guide you through choices. For project memory conflicts, the agent stages archive and local files first so you can review or merge before anything is written to real tool directories.
+
+For project memory, agent-assisted import understands changed macOS usernames. A backup from `/Users/young/Softwares/dotvibe` can be planned for `/Users/youtopia/Softwares/dotvibe` by replacing the old home prefix with the new home. If the project is missing on the new Mac, the agent can show a sanitized `git clone` command from backup metadata and ask before running it. If a project already exists, the agent asks before loading old memory and stages conflicts for review.
+
 ## Vibe Recipes
 
 Recipes are for sharing a setup with teammates or the community. They strip personal data and keep only shareable items such as Claude Code skills, Codex agents, global rules, and safe settings.
