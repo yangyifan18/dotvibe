@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/dotvibe-v1.0-blue?style=for-the-badge&logo=go" alt="version"/>
+  <img src="https://img.shields.io/badge/dotvibe-v1.1-blue?style=for-the-badge&logo=go" alt="version"/>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=for-the-badge&logo=apple" alt="platform"/>
   <img src="https://img.shields.io/github/license/yangyifan18/dotvibe?style=for-the-badge" alt="license"/>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge" alt="prs"/>
@@ -8,11 +8,13 @@
 <h1 align="center">dotvibe</h1>
 
 <p align="center">
-  <img src="assets/dotvibe.png" alt="dotvibe screenshot" width="760"/>
+  <img src="assets/teaserv1.png" alt="dotvibe teaser" width="760"/>
 </p>
 
 <p align="center">
-  <b>把你的 vibe coding 环境搬到新 Mac。</b>
+  <b>迁移、审查和分享你的 AI coding 上下文。</b>
+  <br/>
+  DotVibe 理解 AI coding agents 的 memory、skills、prompts、项目规则和配置，而不只是 dotfiles。
 </p>
 
 <p align="center">
@@ -25,16 +27,20 @@
 
 ## 为什么需要 dotvibe？
 
-你花了好几周调教你的 AI coding agent — 自定义 memory、项目规则、精心打磨的 skills、对话历史。然后你换了台新 Mac，发现：
+你花了好几周调教你的 AI coding agent — 自定义 memory、项目规则、精心打磨的 skills、对话历史。然后你打开一台全新机器、工作电脑或重建后的开发环境，发现：
 
 - **Claude Code** 的项目记忆（`~/.claude/projects/`）没了
 - **Codex CLI** 的自定义 agents（`~/.codex/agents/`）没了
 - **OpenCode** 的配置（`~/.config/opencode/`）没了
 - 那些精心写的 `MEMORY.md`、`AGENTS.md`、`CLAUDE.md` — 全没了
 
-macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding 工作流依赖的那些精细数据。通用 dotfile 管理器（chezmoi、stow）不理解这些工具的内部结构。
-
 **dotvibe** 理解。
+
+## 和 macOS 迁移助理有什么区别？
+
+macOS 迁移助理适合把整台 Mac 迁到另一台 Mac。dotvibe 更窄、更 agent-native：它只关注 AI coding 上下文，支持导出前审查、按工具/项目选择性导入、处理用户名或项目路径变化、stage 后合并项目 memory，以及生成不包含私人 transcripts / 项目 memory 的 `.vibe` recipe。
+
+如果你已经用整机迁移把所有内容完整搬过去，并且 Claude Code / Codex / OpenCode 都正常工作，那这台机器上可能不需要 dotvibe。dotvibe 更适合新环境初始化、局部迁移、团队 recipe、远程/开发容器环境、备份、diff 和可控恢复。
 
 | 功能 | 说明 |
 |---|---|
@@ -42,7 +48,7 @@ macOS 迁移助手能转移应用和设置，但转移不了你的 vibe coding �
 | `export` | 把 config + memory + skills 打包成一个 `.tar.gz` |
 | `list` | 查看备份包里有什么 |
 | `diff` | 按 manifest 路径、checksum、工具或分类比较两个备份包 |
-| `setup` | 在新 Mac 上检测/安装支持的 agent CLI，然后可选恢复备份 |
+| `setup` | 在新机器/环境上检测/安装支持的 agent CLI，然后可选恢复备份 |
 | `import` | 选择性恢复 — 按工具、按项目、或全部 |
 | `recipe export` | 导出只包含 skills、agents、全局规则和安全 settings 的 `.vibe` 配方 |
 | `recipe apply` | 应用 `.vibe` 配方，不需要完整备份 |
@@ -74,7 +80,7 @@ dotvibe status
 # 2. 备份（默认排除 auth 和 symlink）
 dotvibe export
 
-# 3. 把 .tar.gz 发到新 Mac（AirDrop、scp、随便）
+# 3. 把 .tar.gz 发到新机器/环境（AirDrop、scp、随便）
 
 # 4. 在新机器上
 dotvibe import dotvibe-2026-05-20.tar.gz
@@ -131,12 +137,12 @@ cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
 重启 Codex 或重新加载 skills，然后说：
 
 ```text
-Help me migrate my vibe coding setup with dotvibe.
+调用 dotvibe 导出记忆。
 ```
 
 Agent 会调用 `dotvibe agent doctor --json`、`dotvibe agent inventory --json`、导出/导入 plan、dry-run 和 staging workspace，引导你做选择。遇到项目 memory 冲突时，agent 会先把归档版本和本地版本 stage 出来，让你 review 或 merge，再写入真实工具目录。
 
-对于项目 memory，agent 辅助导入会处理 macOS 用户名变化。比如旧备份来自 `/Users/young/Softwares/dotvibe`，新机器会规划到 `/Users/youtopia/Softwares/dotvibe`。如果新机器还没有这个项目，agent 会展示备份 metadata 里的 sanitized `git clone` 命令并先询问；如果项目已存在，agent 会先询问是否加载旧 memory，遇到冲突则 stage 后 review。
+对于项目 memory，agent 辅助导入会处理跨机器后的用户名和 home 路径变化。比如旧备份来自 `/Users/young/Softwares/dotvibe`，新机器会规划到 `/Users/youtopia/Softwares/dotvibe`。如果新机器还没有这个项目，agent 会展示备份 metadata 里的 sanitized `git clone` 命令并先询问；如果项目已存在，agent 会先询问是否加载旧 memory，遇到冲突则 stage 后 review。
 
 ## Vibe Recipes
 
@@ -216,7 +222,7 @@ HOME=/tmp/dotvibe-restore ./dotvibe import backup.tar.gz --yes
 ## 文档
 
 - [Obsidian 文档](obsidian-docs/) — 项目记忆、风险、决策日志
-- Release 构建 — `VERSION=0.1.0 ./scripts/build-release.sh`
+- Release 构建 — `VERSION=1.1 ./scripts/build-release.sh`
 
 ---
 

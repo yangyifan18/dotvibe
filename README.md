@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/dotvibe-v1.0-blue?style=for-the-badge&logo=go" alt="version"/>
+  <img src="https://img.shields.io/badge/dotvibe-v1.1-blue?style=for-the-badge&logo=go" alt="version"/>
   <img src="https://img.shields.io/badge/platform-macOS-lightgrey?style=for-the-badge&logo=apple" alt="platform"/>
   <img src="https://img.shields.io/github/license/yangyifan18/dotvibe?style=for-the-badge" alt="license"/>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen?style=for-the-badge" alt="prs"/>
@@ -8,11 +8,11 @@
 <h1 align="center">dotvibe</h1>
 
 <p align="center">
-  <img src="assets/dotvibe.png" alt="dotvibe screenshot" width="760"/>
+  <img src="assets/teaserv1.png" alt="dotvibe teaser" width="760"/>
 </p>
 
 <p align="center">
-  <b>Migrate your vibe coding setup to a new Mac.</b>
+  <b>Move, inspect, and share your AI coding context across machines and environments.</b>
   <br/>
   DotVibe understands AI coding agents — their memories, skills, prompts, project rules, and configs — not just dotfiles.
 </p>
@@ -27,16 +27,20 @@
 
 ## Why dotvibe?
 
-You spent weeks tuning your AI coding agents — custom memory, project-specific rules, hand-crafted skills, conversation history. Then you get a new Mac and realize:
+You spent weeks tuning your AI coding agents — custom memory, project-specific rules, hand-crafted skills, conversation history. Then you open a fresh machine, work laptop, or rebuilt development environment and realize:
 
 - **Claude Code**'s project memory (`~/.claude/projects/`) is gone
 - **Codex CLI**'s custom agents (`~/.codex/agents/`) are gone
 - **OpenCode**'s configs (`~/.config/opencode/`) are gone
 - All those carefully written `MEMORY.md`, `AGENTS.md`, `CLAUDE.md` files — vanished
 
-macOS Migration Assistant transfers apps and settings, but not the nuanced per-project data your vibe coding workflow depends on. General dotfile managers (chezmoi, stow) don't understand these tools' internal structure.
-
 **dotvibe** does.
+
+## How is this different from macOS Migration Assistant?
+
+macOS Migration Assistant is great when you want to copy an entire Mac to another Mac. dotvibe is narrower and more agent-native: it focuses on AI coding context, lets you inspect what will move, selectively import tools or projects, handle changed usernames/project paths, stage and merge project memory, and export shareable `.vibe` recipes without private transcripts or project data.
+
+If you already used full-device migration and everything works, you may not need dotvibe for that machine. dotvibe is most useful for fresh setups, partial migrations, team recipes, remote/dev environments, backups, diffs, and controlled restore flows.
 
 ## DotVibe vs dotfile managers
 
@@ -48,7 +52,7 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | Selective restore by tool/project | Yes | Limited/manual |
 | Auth excluded by default | Yes | Depends on config |
 | Backup diff by agent/category | Yes | Generic file diff |
-| New Mac bootstrap | Yes | Partial/manual |
+| Fresh machine bootstrap | Yes | Partial/manual |
 
 | Feature | Description |
 |---|---|
@@ -56,7 +60,7 @@ macOS Migration Assistant transfers apps and settings, but not the nuanced per-p
 | `export` | Backup config + memory + skills into a single `.tar.gz` |
 | `list` | Inspect what's inside a backup |
 | `diff` | Compare two backups by manifest path, checksum, tool, or category |
-| `setup` | Bootstrap supported agent CLIs on a new Mac, then optionally restore |
+| `setup` | Bootstrap supported agent CLIs on a new machine/environment, then optionally restore |
 | `import` | Restore selectively — by tool, by project, or everything |
 | `recipe export` | Create a shareable `.vibe` recipe with skills, agents, global rules, and safe settings |
 | `recipe apply` | Apply a `.vibe` recipe without needing a full backup |
@@ -88,7 +92,7 @@ dotvibe status
 # 2. Back it up (auth and symlinks excluded by default)
 dotvibe export
 
-# 3. Send the .tar.gz to your new Mac (AirDrop, scp, whatever)
+# 3. Send the .tar.gz to your new machine/environment (AirDrop, scp, whatever)
 
 # 4. On the new machine
 dotvibe import dotvibe-2026-05-20.tar.gz
@@ -145,12 +149,12 @@ cp -R agent/codex/dotvibe-migration/. "$CODEX_HOME/skills/dotvibe-migration/"
 Restart Codex or reload skills, then ask:
 
 ```text
-Help me migrate my vibe coding setup with dotvibe.
+Use dotvibe to export my memories.
 ```
 
 The agent uses `dotvibe agent doctor --json`, `dotvibe agent inventory --json`, export/import plans, dry-runs, and staging workspaces to guide you through choices. For project memory conflicts, the agent stages archive and local files first so you can review or merge before anything is written to real tool directories.
 
-For project memory, agent-assisted import understands changed macOS usernames. A backup from `/Users/young/Softwares/dotvibe` can be planned for `/Users/youtopia/Softwares/dotvibe` by replacing the old home prefix with the new home. If the project is missing on the new Mac, the agent can show a sanitized `git clone` command from backup metadata and ask before running it. If a project already exists, the agent asks before loading old memory and stages conflicts for review.
+For project memory, agent-assisted import understands changed usernames and home paths across machines. A backup from `/Users/young/Softwares/dotvibe` can be planned for `/Users/youtopia/Softwares/dotvibe` by replacing the old home prefix with the new home. If the project is missing on the new machine, the agent can show a sanitized `git clone` command from backup metadata and ask before running it. If a project already exists, the agent asks before loading old memory and stages conflicts for review.
 
 ## Vibe Recipes
 
@@ -230,7 +234,7 @@ Project filtering currently applies to Claude Code project memory. Codex CLI and
 ## Documentation
 
 - [Obsidian Docs](obsidian-docs/) — Project memory, risks, decisions
-- Release builds — `VERSION=0.1.0 ./scripts/build-release.sh`
+- Release builds — `VERSION=1.1 ./scripts/build-release.sh`
 
 ---
 
