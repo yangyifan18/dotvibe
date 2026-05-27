@@ -3,11 +3,15 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/agentapi"
+	"github.com/yangyifan18/dotvibe/backup"
+	"github.com/yangyifan18/dotvibe/projectmeta"
 )
 
 func TestRunAgentDoctorJSON(t *testing.T) {
@@ -130,4 +134,156 @@ func TestRunAgentImportPlanValidatesRequiredBases(t *testing.T) {
 	if !strings.Contains(out.String(), `"code": "missing_base_archive"`) || !strings.Contains(out.String(), expectedDigest) || !strings.Contains(out.String(), `"recommended_next_action": "provide-base-archives"`) {
 		t.Fatalf("unexpected missing base plan: %s", out.String())
 	}
+}
+
+func TestRunAgentImportPlanJSONIncludesProjectRelocation(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	archive := createAgentPlanArchiveWithManifest(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects: []backup.ProjectManifest{{
+			ToolID:         "claude-code",
+			ProjectKey:     "-Users-young-Softwares-dotvibe",
+			SourcePath:     "/Users/young/Softwares/dotvibe",
+			SourceHome:     "/Users/young",
+			RelativeToHome: "Softwares/dotvibe",
+			PathScope:      backup.ProjectPathScopeHome,
+			Git: backup.ProjectGitMetadata{IsRepo: true, Remotes: []backup.ProjectGitRemote{{
+				Name: "origin", URL: "git@github.com:yangyifan18/dotvibe.git", Sanitized: true, Cloneable: true,
+			}}},
+		}},
+	})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"project_relocations"`) || !strings.Contains(out.String(), `"clone"`) || !strings.Contains(out.String(), `"git"`) {
+		t.Fatalf("unexpected JSON: %s", out.String())
+	}
+}
+
+func TestRunAgentImportPlanRemapsClaudeTargetPath(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	archive := createDiffArchiveWithManifestAndFiles(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects:    []backup.ProjectManifest{{ToolID: "claude-code", ProjectKey: "-Users-young-Softwares-dotvibe", RelativeToHome: "Softwares/dotvibe", PathScope: backup.ProjectPathScopeHome}},
+	}, map[string]string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md": "old memory\n"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	wantKey := adapters.ClaudeProjectKey(filepath.Join(home, "Softwares", "dotvibe"))
+	if !strings.Contains(out.String(), wantKey) || strings.Contains(out.String(), filepath.Join(home, ".claude", "projects", "-Users-young-Softwares-dotvibe")) {
+		t.Fatalf("unexpected remapped plan: %s", out.String())
+	}
+}
+
+func TestRunAgentImportPlanFlagsAssociationReviewRequired(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	targetPath := filepath.Join(home, "Softwares", "dotvibe")
+	if err := os.MkdirAll(targetPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+	runGitForExportTest(t, targetPath, "init")
+	runGitForExportTest(t, targetPath, "remote", "add", "origin", "git@github.com:someone/fork.git")
+	archive := createAgentPlanArchiveWithManifest(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects: []backup.ProjectManifest{{
+			ToolID:         "claude-code",
+			ProjectKey:     "-Users-young-Softwares-dotvibe",
+			RelativeToHome: "Softwares/dotvibe",
+			PathScope:      backup.ProjectPathScopeHome,
+			Git: backup.ProjectGitMetadata{IsRepo: true, Remotes: []backup.ProjectGitRemote{{
+				Name: "origin", URL: "git@github.com:yangyifan18/dotvibe.git", Sanitized: true, Cloneable: true,
+			}}},
+		}},
+	})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	if !strings.Contains(out.String(), `"association_review_required": true`) || !strings.Contains(out.String(), projectmeta.ActionAssociationReviewRequired) {
+		t.Fatalf("unexpected JSON: %s", out.String())
+	}
+}
+
+func TestAgentProjectRelocationEndToEndPlanJSON(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	archive := createDiffArchiveWithManifestAndFiles(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		SourceHome:  "/Users/young",
+		SourceUser:  "young",
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects: []backup.ProjectManifest{{
+			ToolID:         "claude-code",
+			ProjectKey:     "-Users-young-Softwares-dotvibe",
+			SourcePath:     "/Users/young/Softwares/dotvibe",
+			SourceHome:     "/Users/young",
+			RelativeToHome: "Softwares/dotvibe",
+			PathScope:      backup.ProjectPathScopeHome,
+			MemoryFiles:    []string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md"},
+			Git: backup.ProjectGitMetadata{IsRepo: true, Remotes: []backup.ProjectGitRemote{{
+				Name: "origin", URL: "git@github.com:yangyifan18/dotvibe.git", Sanitized: true, Cloneable: true,
+			}}},
+		}},
+	}, map[string]string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md": "archive memory\n"})
+	var out bytes.Buffer
+	if err := runAgentImportPlan(archive, agentImportPlanOptions{JSON: true}, &out); err != nil {
+		t.Fatalf("runAgentImportPlan: %v", err)
+	}
+	var plan agentapi.ImportPlan
+	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out.String())
+	}
+	if plan.Destination.Home != home || len(plan.ProjectRelocations) != 1 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if !plan.ProjectRelocations[0].Clone.Recommended || plan.ProjectRelocations[0].Clone.Command[0] != "git" {
+		t.Fatalf("clone plan = %#v", plan.ProjectRelocations[0].Clone)
+	}
+}
+
+func createAgentPlanArchiveWithManifest(t *testing.T, manifest *backup.Manifest) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "archive.tar.gz")
+	if manifest.Tools == nil {
+		manifest.Tools = map[string]backup.ToolManifest{}
+	}
+	if err := backup.CreateArchive(path, manifest, nil); err != nil {
+		t.Fatalf("CreateArchive: %v", err)
+	}
+	return path
+}
+
+func createDiffArchiveWithManifestAndFiles(t *testing.T, manifest *backup.Manifest, files map[string]string) string {
+	t.Helper()
+	src := t.TempDir()
+	var entries []adapters.FileEntry
+	for name, content := range files {
+		path := filepath.Join(src, strings.ReplaceAll(name, "/", "_"))
+		writeFileForImportTest(t, path, content)
+		entries = append(entries, adapters.FileEntry{SourcePath: path, InArchive: name, Category: adapters.CategoryMemory})
+	}
+	archivePath := filepath.Join(t.TempDir(), "archive.tar.gz")
+	if manifest.Tools == nil {
+		manifest.Tools = map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: len(entries)}}
+	}
+	if err := backup.CreateArchive(archivePath, manifest, entries); err != nil {
+		t.Fatalf("CreateArchive: %v", err)
+	}
+	return archivePath
 }

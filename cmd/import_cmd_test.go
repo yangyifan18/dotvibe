@@ -515,3 +515,72 @@ func TestImportStageRejectsExistingStageWorkspace(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestImportStageWithRemapHomeUsesNewProjectKeyForLocalCopy(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	targetKey := adapters.ClaudeProjectKey(filepath.Join(home, "Softwares", "dotvibe"))
+	writeFileForImportTest(t, filepath.Join(home, ".claude", "projects", targetKey, "CLAUDE.md"), "local\n")
+	archive := createDiffArchiveWithManifestAndFiles(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects:    []backup.ProjectManifest{{ToolID: "claude-code", ProjectKey: "-Users-young-Softwares-dotvibe", RelativeToHome: "Softwares/dotvibe", PathScope: backup.ProjectPathScopeHome}},
+	}, map[string]string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md": "archive\n"})
+	stageDir := filepath.Join(t.TempDir(), "stage")
+	oldStage, oldStageDir, oldRemap := importStage, importStageDir, importRemapHome
+	oldOnly, oldProject, oldForce, oldBases, oldTargets := importOnly, importProject, importForce, importBases, importProjectTargets
+	oldDryRun := importDryRun
+	defer func() {
+		importStage, importStageDir, importRemapHome = oldStage, oldStageDir, oldRemap
+		importOnly, importProject, importForce, importBases, importProjectTargets = oldOnly, oldProject, oldForce, oldBases, oldTargets
+		importDryRun = oldDryRun
+	}()
+	importStage = true
+	importStageDir = stageDir
+	importRemapHome = true
+	importOnly = ""
+	importProject = ""
+	importForce = false
+	importBases = nil
+	importProjectTargets = nil
+	importDryRun = false
+	if err := importCmd.RunE(importCmd, []string{archive}); err != nil {
+		t.Fatalf("import --stage --remap-home: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stageDir, "local", "claude-code", "projects", targetKey, "CLAUDE.md")); err != nil {
+		t.Fatalf("missing local comparison copy under remapped project key: %v", err)
+	}
+}
+
+func TestImportDryRunWithRemapHomeKeepsRealFilesUntouched(t *testing.T) {
+	home := t.TempDir()
+	oldHome := testSetHome(t, home)
+	defer oldHome()
+	archive := createDiffArchiveWithManifestAndFiles(t, &backup.Manifest{
+		Version:     "1.0.0",
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects:    []backup.ProjectManifest{{ToolID: "claude-code", ProjectKey: "-Users-young-Softwares-dotvibe", RelativeToHome: "Softwares/dotvibe", PathScope: backup.ProjectPathScopeHome}},
+	}, map[string]string{"claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md": "archive\n"})
+	oldDryRun, oldRemap, oldOnly, oldProject, oldForce, oldBases, oldTargets := importDryRun, importRemapHome, importOnly, importProject, importForce, importBases, importProjectTargets
+	defer func() {
+		importDryRun, importRemapHome = oldDryRun, oldRemap
+		importOnly, importProject, importForce, importBases, importProjectTargets = oldOnly, oldProject, oldForce, oldBases, oldTargets
+	}()
+	importDryRun = true
+	importRemapHome = true
+	importOnly = ""
+	importProject = ""
+	importForce = false
+	importBases = nil
+	importProjectTargets = nil
+	if err := importCmd.RunE(importCmd, []string{archive}); err != nil {
+		t.Fatalf("import --dry-run --remap-home: %v", err)
+	}
+	targetKey := adapters.ClaudeProjectKey(filepath.Join(home, "Softwares", "dotvibe"))
+	if _, err := os.Stat(filepath.Join(home, ".claude", "projects", targetKey, "CLAUDE.md")); !os.IsNotExist(err) {
+		t.Fatalf("dry-run should not create target memory, stat err=%v", err)
+	}
+}

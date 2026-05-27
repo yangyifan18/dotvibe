@@ -181,6 +181,22 @@ func TestClaudeAdapter_ProjectFilterKeepsOnlyRequestedProject(t *testing.T) {
 	}
 }
 
+func TestClaudeAdapterPlanRestoreUsesProjectKeyRemap(t *testing.T) {
+	home := t.TempDir()
+	a := &ClaudeAdapter{home: home}
+	plans, err := a.PlanRestore([]FileEntry{{
+		InArchive: "claude-code/projects/-Users-young-Softwares-dotvibe/CLAUDE.md",
+		Category:  CategoryMemory,
+	}}, RestoreOpts{ProjectKeyRemaps: map[string]string{"-Users-young-Softwares-dotvibe": "-Users-youtopia-Softwares-dotvibe"}})
+	if err != nil {
+		t.Fatalf("PlanRestore: %v", err)
+	}
+	want := filepath.Join(home, ".claude", "projects", "-Users-youtopia-Softwares-dotvibe", "CLAUDE.md")
+	if len(plans) != 1 || plans[0].TargetPath != want {
+		t.Fatalf("plans = %#v want %s", plans, want)
+	}
+}
+
 func assertArchiveEntry(t *testing.T, files []FileEntry, path, category string) {
 	t.Helper()
 	for _, file := range files {

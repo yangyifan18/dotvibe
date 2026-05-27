@@ -8,6 +8,7 @@ import (
 
 	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
+	"github.com/yangyifan18/dotvibe/projectmeta"
 )
 
 func TestBuildExportPlanForRecipe(t *testing.T) {
@@ -65,6 +66,35 @@ func TestBuildImportPlanAddsUnsupportedSelectedFiles(t *testing.T) {
 	}
 	if plan.Summary.Unsupported != 1 || plan.Entries[0].Action != "unsupported" || plan.RecommendedNextAction != "fix-unsupported-paths" {
 		t.Fatalf("plan = %#v", plan)
+	}
+}
+
+func TestBuildImportPlanIncludesProjectRelocations(t *testing.T) {
+	destHome := filepath.Join(t.TempDir(), "youtopia")
+	manifest := &backup.Manifest{
+		ArchiveKind: backup.ArchiveKindFull,
+		Tools:       map[string]backup.ToolManifest{"claude-code": {Included: []string{adapters.CategoryMemory}, FileCount: 1}},
+		Projects: []backup.ProjectManifest{{
+			ToolID:         "claude-code",
+			ProjectKey:     "-Users-young-Softwares-dotvibe",
+			SourcePath:     "/Users/young/Softwares/dotvibe",
+			SourceHome:     "/Users/young",
+			RelativeToHome: "Softwares/dotvibe",
+			PathScope:      backup.ProjectPathScopeHome,
+			Git: backup.ProjectGitMetadata{IsRepo: true, Remotes: []backup.ProjectGitRemote{{
+				Name: "origin", URL: "git@github.com:yangyifan18/dotvibe.git", Sanitized: true, Cloneable: true,
+			}}},
+		}},
+	}
+	plan, err := BuildImportPlan(ImportPlanOptions{Manifest: manifest, DestinationHome: destHome, DestinationUser: "youtopia", EnableHomeRemap: true})
+	if err != nil {
+		t.Fatalf("BuildImportPlan: %v", err)
+	}
+	if plan.Destination.Home != destHome || len(plan.ProjectRelocations) != 1 {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if plan.ProjectRelocations[0].Clone.Command[0] != "git" || plan.ProjectRelocations[0].RecommendedNextAction != projectmeta.ActionConfirmCloneThenStageMemory {
+		t.Fatalf("relocation = %#v", plan.ProjectRelocations[0])
 	}
 }
 

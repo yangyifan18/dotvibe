@@ -9,6 +9,7 @@ import (
 
 	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
+	"github.com/yangyifan18/dotvibe/projectmeta"
 )
 
 type ExportPlanOptions struct {
@@ -32,24 +33,31 @@ type ExportPlan struct {
 }
 
 type ImportPlanOptions struct {
-	ArchivePath   string
-	Manifest      *backup.Manifest
-	RestorePlan   []adapters.RestorePlanEntry
-	Bases         []string
-	SelectedFiles []string
-	ArchiveSet    *backup.ArchiveSet
-	Issues        []AgentIssue
+	ArchivePath      string
+	Manifest         *backup.Manifest
+	RestorePlan      []adapters.RestorePlanEntry
+	Bases            []string
+	SelectedFiles    []string
+	ArchiveSet       *backup.ArchiveSet
+	Issues           []AgentIssue
+	DestinationHome  string
+	DestinationUser  string
+	ProjectTargets   map[string]string
+	EnableHomeRemap  bool
+	ProjectKeyRemaps map[string]string
 }
 
 type ImportPlan struct {
-	ArchivePath           string            `json:"archive_path"`
-	ArchiveKind           string            `json:"archive_kind"`
-	BaseArchives          []ImportPlanBase  `json:"base_archives,omitempty"`
-	Summary               ImportPlanSummary `json:"summary"`
-	Entries               []ImportPlanEntry `json:"entries"`
-	Issues                []AgentIssue      `json:"issues"`
-	RecommendedNextAction string            `json:"recommended_next_action"`
-	GeneratedAt           time.Time         `json:"generated_at"`
+	ArchivePath           string                          `json:"archive_path"`
+	ArchiveKind           string                          `json:"archive_kind"`
+	BaseArchives          []ImportPlanBase                `json:"base_archives,omitempty"`
+	Summary               ImportPlanSummary               `json:"summary"`
+	Destination           projectmeta.DestinationInfo     `json:"destination,omitempty"`
+	ProjectRelocations    []projectmeta.ProjectRelocation `json:"project_relocations,omitempty"`
+	Entries               []ImportPlanEntry               `json:"entries"`
+	Issues                []AgentIssue                    `json:"issues"`
+	RecommendedNextAction string                          `json:"recommended_next_action"`
+	GeneratedAt           time.Time                       `json:"generated_at"`
 }
 
 type ImportPlanBase struct {
@@ -70,16 +78,17 @@ type ImportPlanSummary struct {
 }
 
 type ImportPlanEntry struct {
-	Path        string `json:"path"`
-	ToolID      string `json:"tool_id"`
-	Category    string `json:"category,omitempty"`
-	TargetPath  string `json:"target_path,omitempty"`
-	Action      string `json:"action"`
-	Reason      string `json:"reason,omitempty"`
-	NeedsReview bool   `json:"needs_review"`
-	SizeBytes   int64  `json:"size_bytes,omitempty"`
-	SHA256      string `json:"sha256,omitempty"`
-	Storage     string `json:"storage,omitempty"`
+	Path           string `json:"path"`
+	ToolID         string `json:"tool_id"`
+	Category       string `json:"category,omitempty"`
+	TargetPath     string `json:"target_path,omitempty"`
+	Action         string `json:"action"`
+	Reason         string `json:"reason,omitempty"`
+	NeedsReview    bool   `json:"needs_review"`
+	SizeBytes      int64  `json:"size_bytes,omitempty"`
+	SHA256         string `json:"sha256,omitempty"`
+	Storage        string `json:"storage,omitempty"`
+	LocalStagePath string `json:"local_stage_path,omitempty"`
 }
 
 func BuildExportPlan(opts ExportPlanOptions) (ExportPlan, error) {
@@ -153,11 +162,27 @@ func BuildImportPlan(opts ImportPlanOptions) (ImportPlan, error) {
 	if plan.ArchiveKind == "" {
 		plan.ArchiveKind = backup.ArchiveKindFull
 	}
+	if opts.DestinationHome != "" || opts.DestinationUser != "" {
+		plan.Destination = projectmeta.DestinationInfo{Home: opts.DestinationHome, User: opts.DestinationUser}
+	}
+	if len(opts.Manifest.Projects) > 0 {
+		plan.ProjectRelocations = projectmeta.BuildRelocationPlans(projectmeta.RelocationOptions{
+			Projects:        opts.Manifest.Projects,
+			DestinationHome: opts.DestinationHome,
+			DestinationUser: opts.DestinationUser,
+			EnableHomeRemap: opts.EnableHomeRemap,
+			ProjectTargets:  opts.ProjectTargets,
+		})
+	}
 	plan.BaseArchives = importPlanBases(opts.Manifest, opts.Bases, opts.Issues)
 	filesByPath := importPlanFilesByPath(opts.Manifest)
 	seen := map[string]struct{}{}
 	for _, restore := range opts.RestorePlan {
 		entry := ImportPlanEntry{Path: restore.InArchive, ToolID: archiveToolIDForAgent(restore.InArchive), Category: restore.Category, TargetPath: restore.TargetPath, Action: importPlanAction(restore), Reason: restore.Reason}
+		entry.LocalStagePath = projectmeta.RemapClaudeArchivePath(entry.Path, opts.ProjectKeyRemaps)
+		if entry.LocalStagePath == entry.Path {
+			entry.LocalStagePath = ""
+		}
 		if file, ok := filesByPath[restore.InArchive]; ok {
 			enrichImportPlanEntry(&entry, file)
 		}

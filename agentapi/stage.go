@@ -60,7 +60,11 @@ func StageImport(opts StageOptions) (StageResult, error) {
 		}
 		result.FilesStaged++
 		if entry.TargetPath != "" && entry.NeedsReview {
-			localDst, err := safeStageJoin(filepath.Join(opts.StageDir, "local"), entry.Path)
+			localLogicalPath := entry.Path
+			if entry.LocalStagePath != "" {
+				localLogicalPath = entry.LocalStagePath
+			}
+			localDst, err := safeStageJoin(filepath.Join(opts.StageDir, "local"), localLogicalPath)
 			if err != nil {
 				return result, err
 			}

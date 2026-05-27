@@ -13,14 +13,16 @@ import (
 )
 
 var (
-	importYes      bool
-	importOnly     string
-	importProject  string
-	importForce    bool
-	importDryRun   bool
-	importBases    []string
-	importStage    bool
-	importStageDir string
+	importYes            bool
+	importOnly           string
+	importProject        string
+	importForce          bool
+	importDryRun         bool
+	importBases          []string
+	importStage          bool
+	importStageDir       string
+	importRemapHome      bool
+	importProjectTargets []string
 )
 
 var importCmd = &cobra.Command{
@@ -86,9 +88,16 @@ var importCmd = &cobra.Command{
 		if importProject != "" {
 			fmt.Printf("Project filter: %s\n", adapters.ClaudeProjectKey(importProject))
 		}
+		destHome, destUser := currentDestinationIdentity()
+		projectTargets, err := parseProjectTargets(importProjectTargets)
+		if err != nil {
+			return err
+		}
+		keyRemaps := projectKeyRemapsForManifest(m, destHome, destUser, importRemapHome, projectTargets)
 		opts := adapters.RestoreOpts{
-			Force:   importForce,
-			Project: importProject,
+			Force:            importForce,
+			Project:          importProject,
+			ProjectKeyRemaps: keyRemaps,
 		}
 		var preview []adapters.RestorePlanEntry
 		if importStage {
@@ -118,7 +127,19 @@ var importCmd = &cobra.Command{
 			if err := backup.ExtractArchiveSetFiles(args[0], importBases, tmpDir, selectedFiles); err != nil {
 				return fmt.Errorf("failed to extract archive for staging: %w", err)
 			}
-			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: args[0], Manifest: m, RestorePlan: preview, Bases: importBases, SelectedFiles: selectedFiles, ArchiveSet: set})
+			plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{
+				ArchivePath:      args[0],
+				Manifest:         m,
+				RestorePlan:      preview,
+				Bases:            importBases,
+				SelectedFiles:    selectedFiles,
+				ArchiveSet:       set,
+				DestinationHome:  destHome,
+				DestinationUser:  destUser,
+				ProjectTargets:   projectTargets,
+				EnableHomeRemap:  importRemapHome,
+				ProjectKeyRemaps: keyRemaps,
+			})
 			if err != nil {
 				return err
 			}
@@ -168,6 +189,8 @@ func init() {
 	importCmd.Flags().StringSliceVar(&importBases, "base", nil, "base archive for incremental restore; repeat or comma-separate for a chain")
 	importCmd.Flags().BoolVar(&importStage, "stage", false, "stage selected files for agent review without restoring")
 	importCmd.Flags().StringVar(&importStageDir, "stage-dir", "", "stage directory for --stage")
+	importCmd.Flags().BoolVar(&importRemapHome, "remap-home", false, "remap Claude project memory from source home to current home")
+	importCmd.Flags().StringSliceVar(&importProjectTargets, "project-target", nil, "project target override source-key=target-path")
 	rootCmd.AddCommand(importCmd)
 }
 

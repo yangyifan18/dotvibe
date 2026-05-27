@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/user"
 	"sort"
 	"strings"
 
@@ -12,6 +14,7 @@ import (
 	"github.com/yangyifan18/dotvibe/agentapi"
 	"github.com/yangyifan18/dotvibe/backup"
 	"github.com/yangyifan18/dotvibe/bootstrap"
+	"github.com/yangyifan18/dotvibe/projectmeta"
 )
 
 type agentDoctorOptions struct {
@@ -109,11 +112,13 @@ type agentExportPlanOptions struct {
 }
 
 type agentImportPlanOptions struct {
-	JSON    bool
-	Only    string
-	Project string
-	Force   bool
-	Bases   []string
+	JSON           bool
+	Only           string
+	Project        string
+	Force          bool
+	Bases          []string
+	NoRemapHome    bool
+	ProjectTargets []string
 }
 
 var agentExportPlanOpts agentExportPlanOptions
@@ -149,6 +154,8 @@ func init() {
 	agentImportPlanCmd.Flags().StringVar(&agentImportPlanOpts.Project, "project", "", "Claude project filter")
 	agentImportPlanCmd.Flags().BoolVar(&agentImportPlanOpts.Force, "force", false, "plan overwrite conflicts")
 	agentImportPlanCmd.Flags().StringSliceVar(&agentImportPlanOpts.Bases, "base", nil, "base archives for incremental import plan")
+	agentImportPlanCmd.Flags().BoolVar(&agentImportPlanOpts.NoRemapHome, "no-remap-home", false, "disable default home-prefix project remap in agent plans")
+	agentImportPlanCmd.Flags().StringSliceVar(&agentImportPlanOpts.ProjectTargets, "project-target", nil, "project target override source-key=target-path")
 	agentCmd.AddCommand(agentExportPlanCmd, agentImportPlanCmd)
 }
 
@@ -180,8 +187,27 @@ func runAgentImportPlan(path string, opts agentImportPlanOptions, w io.Writer) e
 	} else {
 		defer set.Close()
 	}
-	preview := buildAgentRestorePreview(toolFiles, adapters.RestoreOpts{Force: opts.Force, Project: opts.Project})
-	plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{ArchivePath: path, Manifest: ar.Manifest, RestorePlan: preview, Bases: opts.Bases, SelectedFiles: selectedFiles, ArchiveSet: set, Issues: issues})
+	destHome, destUser := currentDestinationIdentity()
+	projectTargets, err := parseProjectTargets(opts.ProjectTargets)
+	if err != nil {
+		return err
+	}
+	keyRemaps := projectKeyRemapsForManifest(ar.Manifest, destHome, destUser, !opts.NoRemapHome, projectTargets)
+	preview := buildAgentRestorePreview(toolFiles, adapters.RestoreOpts{Force: opts.Force, Project: opts.Project, ProjectKeyRemaps: keyRemaps})
+	plan, err := agentapi.BuildImportPlan(agentapi.ImportPlanOptions{
+		ArchivePath:      path,
+		Manifest:         ar.Manifest,
+		RestorePlan:      preview,
+		Bases:            opts.Bases,
+		SelectedFiles:    selectedFiles,
+		ArchiveSet:       set,
+		Issues:           issues,
+		DestinationHome:  destHome,
+		DestinationUser:  destUser,
+		ProjectTargets:   projectTargets,
+		EnableHomeRemap:  !opts.NoRemapHome,
+		ProjectKeyRemaps: keyRemaps,
+	})
 	if err != nil {
 		return err
 	}
@@ -261,4 +287,44 @@ func readImportPlanArchive(path string, opts agentImportPlanOptions) (*backup.Ar
 		toolFiles = filterImportEntriesByProject(toolFiles, opts.Project)
 	}
 	return ar, toolFiles, flattenImportFiles(toolFiles), nil
+}
+
+func currentDestinationIdentity() (string, string) {
+	home, _ := os.UserHomeDir()
+	name := ""
+	if current, err := user.Current(); err == nil {
+		name = current.Username
+		if slash := strings.LastIndex(name, string(os.PathSeparator)); slash >= 0 {
+			name = name[slash+1:]
+		}
+	}
+	return home, name
+}
+
+func parseProjectTargets(values []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, value := range values {
+		key, target, ok := strings.Cut(value, "=")
+		key = strings.TrimSpace(key)
+		target = strings.TrimSpace(target)
+		if !ok || key == "" || target == "" {
+			return nil, fmt.Errorf("project target must be source-key=target-path: %s", value)
+		}
+		out[key] = target
+	}
+	return out, nil
+}
+
+func projectKeyRemapsForManifest(m *backup.Manifest, destHome, destUser string, remapHome bool, projectTargets map[string]string) map[string]string {
+	if m == nil || len(m.Projects) == 0 {
+		return nil
+	}
+	plans := projectmeta.BuildRelocationPlans(projectmeta.RelocationOptions{
+		Projects:        m.Projects,
+		DestinationHome: destHome,
+		DestinationUser: destUser,
+		EnableHomeRemap: remapHome,
+		ProjectTargets:  projectTargets,
+	})
+	return projectmeta.BuildProjectKeyRemaps(plans)
 }

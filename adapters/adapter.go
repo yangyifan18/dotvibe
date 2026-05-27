@@ -49,8 +49,9 @@ type ToolStatus struct {
 }
 
 type RestoreOpts struct {
-	Force   bool
-	Project string
+	Force            bool
+	Project          string
+	ProjectKeyRemaps map[string]string
 }
 
 type RestorePlanEntry struct {
