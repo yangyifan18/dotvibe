@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/yangyifan18/dotvibe/adapters"
 	"github.com/yangyifan18/dotvibe/backup"
 	"github.com/yangyifan18/dotvibe/config"
+	"github.com/yangyifan18/dotvibe/projectmeta"
 )
 
 var (
@@ -122,11 +124,23 @@ var exportCmd = &cobra.Command{
 		}
 
 		hostname, _ := os.Hostname()
+		sourceHome, _ := os.UserHomeDir()
+		sourceUser := ""
+		if current, err := user.Current(); err == nil {
+			sourceUser = current.Username
+			if slash := strings.LastIndex(sourceUser, string(os.PathSeparator)); slash >= 0 {
+				sourceUser = sourceUser[slash+1:]
+			}
+		}
+		projects := projectmeta.CollectClaudeProjects(allEntries, sourceHome)
 		manifest := &backup.Manifest{
-			Version:  "1.0.0",
-			Created:  time.Now().UTC(),
-			Hostname: hostname,
-			Tools:    toolManifests,
+			Version:    "1.0.0",
+			Created:    time.Now().UTC(),
+			Hostname:   hostname,
+			SourceHome: sourceHome,
+			SourceUser: sourceUser,
+			Tools:      toolManifests,
+			Projects:   projects,
 		}
 
 		var plan backup.ArchivePlan
