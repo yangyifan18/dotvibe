@@ -12,8 +12,9 @@ Guide users through dotvibe migrations as a choice-driven assistant. Use dotvibe
 1. Run `dotvibe agent doctor --json`.
 2. If the user is on the source Mac, read `references/source-export.md`.
 3. If the user is on the destination Mac, read `references/destination-import.md`.
-4. If project memory conflicts exist or the user asks to review/merge memory, read `references/memory-merge.md`.
-5. For risky actions, read `references/safety.md`.
+4. If `import-plan` reports `project_relocations`, or the user mentions a changed username/home path, missing project checkout, clone, repo mismatch, or loading old project memory, read `references/project-relocation.md`.
+5. If project memory conflicts exist or the user asks to review/merge memory, read `references/memory-merge.md`.
+6. For risky actions, read `references/safety.md`.
 
 ## Rules
 

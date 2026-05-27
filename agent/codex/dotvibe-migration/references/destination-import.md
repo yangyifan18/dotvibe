@@ -6,10 +6,13 @@ Use this on the new Mac.
 2. If required tools are missing, run `dotvibe setup <archive>` first without `--install`; ask before using `--install`.
 3. Run `dotvibe agent import-plan <archive> --json`.
 4. Summarize writes, identical files, conflicts, unsupported paths, and recommended next action.
-5. If conflicts include project memory, recommend staging.
-6. For staging, run `dotvibe import <archive> --stage --stage-dir <chosen-dir>`.
-7. If the user chooses direct import, run `dotvibe import <archive> --dry-run` first.
-8. Before a direct write, create or ask the user to create a fresh destination-side `dotvibe export` backup, unless the final action only writes new files into an empty target.
-9. Ask before direct write. Use `--yes` only after explicit confirmation.
-10. Avoid `--force` unless the user chooses overwrite after seeing conflicts and has a fresh backup or staged local copies.
-11. After full-archive import, summarize changed files and note that full imports currently do not create rollback records; use the pre-import backup, staged/local copies, or manual recovery. For recipe apply flows, show `dotvibe rollback list` plus the relevant apply id.
+5. If the plan includes `project_relocations`, read `project-relocation.md` before asking import choices.
+6. For missing projects, resolve clone/skip/target-path choices before importing memory.
+7. For existing projects, ask whether to load old memory; stage if local memory exists.
+8. If conflicts include project memory, recommend staging.
+9. For staging, run `dotvibe import <archive> --stage --stage-dir <chosen-dir>`.
+10. If the user chooses direct import, run `dotvibe import <archive> --dry-run` first.
+11. Before a direct write, create or ask the user to create a fresh destination-side `dotvibe export` backup, unless the final action only writes new files into an empty target.
+12. Ask before direct write. Use `--yes` only after explicit confirmation.
+13. Avoid `--force` unless the user chooses overwrite after seeing conflicts and has a fresh backup or staged local copies.
+14. After full-archive import, summarize changed files and note that full imports currently do not create rollback records; use the pre-import backup, staged/local copies, or manual recovery. For recipe apply flows, show `dotvibe rollback list` plus the relevant apply id.
