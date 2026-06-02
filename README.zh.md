@@ -62,6 +62,9 @@ macOS 迁移助理适合把整台 Mac 迁到另一台 Mac。dotvibe 更窄、更
 go install github.com/yangyifan18/dotvibe@latest
 
 # Homebrew
+# Runbook: docs/homebrew-preflight.md
+# 维护者：发布 tap 前先做本地验证
+# ./scripts/homebrew-preflight.sh --keep
 # 即将支持：brew install yangyifan18/tap/dotvibe
 
 # 从源码构建
