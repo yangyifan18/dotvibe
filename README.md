@@ -74,6 +74,9 @@ If you already used full-device migration and everything works, you may not need
 go install github.com/yangyifan18/dotvibe@latest
 
 # Homebrew
+# Runbook: docs/homebrew-preflight.md
+# Maintainers: validate locally before publishing the tap
+# ./scripts/homebrew-preflight.sh --keep
 # Coming soon: brew install yangyifan18/tap/dotvibe
 
 # Build from source
