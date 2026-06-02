@@ -65,7 +65,7 @@ go install github.com/yangyifan18/dotvibe@latest
 # Runbook: docs/homebrew-preflight.md
 # 维护者：发布 tap 前先做本地验证
 # ./scripts/homebrew-preflight.sh --keep
-# 即将支持：brew install yangyifan18/tap/dotvibe
+brew install yangyifan18/tap/dotvibe
 
 # 从源码构建
 git clone https://github.com/yangyifan18/dotvibe.git
