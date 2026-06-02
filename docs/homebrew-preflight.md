@@ -24,6 +24,8 @@ The formula smoke is opt-in because `brew install --build-from-source` writes to
 ./scripts/homebrew-formula-smoke.sh --formula ./Formula/dotvibe.rb --keep
 ```
 
+When `--formula` is a file path, the wrapper converts it to the formula name because Homebrew audits formula tokens, not direct paths. Run the script from a registered tap checkout such as `$(brew --repository yangyifan18/tap)` so `dotvibe` resolves to the local formula.
+
 Expected: `brew audit`, `brew install --build-from-source`, `brew test`, and the functional preflight against the brewed binary pass.
 
 ## Release gate checklist

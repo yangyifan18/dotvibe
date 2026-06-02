@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 FORMULA=""
+FORMULA_REF=""
 ALLOW_EXISTING_DOTVIBE=0
 SKIP_ONLINE_AUDIT=0
 KEEP=0
@@ -62,6 +63,16 @@ if [[ -z "$FORMULA" ]]; then
   exit 2
 fi
 
+FORMULA_REF="$FORMULA"
+if [[ -f "$FORMULA" ]]; then
+  formula_file="$(basename "$FORMULA")"
+  if [[ "$formula_file" != *.rb ]]; then
+    echo "formula path must end in .rb: $FORMULA" >&2
+    exit 2
+  fi
+  FORMULA_REF="${formula_file%.rb}"
+fi
+
 cleanup() {
   local status=$?
   if [[ "$SCRIPT_INSTALLED_DOTVIBE" == "1" && "$DOTVIBE_WAS_INSTALLED" == "0" && "$KEEP" == "0" ]]; then
@@ -98,13 +109,13 @@ if brew list --formula dotvibe > "$LOG_DIR/brew-list-dotvibe.out" 2> "$LOG_DIR/b
   fi
 fi
 
-brew audit --strict --formula "$FORMULA" > "$LOG_DIR/brew-audit-strict.out" 2> "$LOG_DIR/brew-audit-strict.err"
+brew audit --strict --formula "$FORMULA_REF" > "$LOG_DIR/brew-audit-strict.out" 2> "$LOG_DIR/brew-audit-strict.err"
 if [[ "$SKIP_ONLINE_AUDIT" == "0" ]]; then
-  brew audit --strict --online --formula "$FORMULA" > "$LOG_DIR/brew-audit-online.out" 2> "$LOG_DIR/brew-audit-online.err"
+  brew audit --strict --online --formula "$FORMULA_REF" > "$LOG_DIR/brew-audit-online.out" 2> "$LOG_DIR/brew-audit-online.err"
 fi
-brew install --build-from-source "$FORMULA" > "$LOG_DIR/brew-install.out" 2> "$LOG_DIR/brew-install.err"
+brew install --build-from-source "$FORMULA_REF" > "$LOG_DIR/brew-install.out" 2> "$LOG_DIR/brew-install.err"
 SCRIPT_INSTALLED_DOTVIBE=1
-brew test "$FORMULA" > "$LOG_DIR/brew-test.out" 2> "$LOG_DIR/brew-test.err"
+brew test "$FORMULA_REF" > "$LOG_DIR/brew-test.out" 2> "$LOG_DIR/brew-test.err"
 
 BREWED_DOTVIBE="$(brew --prefix dotvibe)/bin/dotvibe"
 if [[ ! -x "$BREWED_DOTVIBE" ]]; then
@@ -120,6 +131,7 @@ fi
 
 echo "Homebrew formula smoke passed."
 echo "Formula: $FORMULA"
+echo "Formula ref: $FORMULA_REF"
 echo "Brewed binary: $BREWED_DOTVIBE"
 if [[ "$KEEP" == "1" ]]; then
   echo "Logs: $LOG_DIR"
