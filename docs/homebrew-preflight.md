@@ -1,12 +1,34 @@
 # Homebrew Preflight
 
-This runbook validates dotvibe before publishing the Homebrew tap.
+This runbook validates dotvibe Homebrew releases and formula changes. The v1.1 tap is live, so use this before changing the formula, cutting future releases, or investigating Homebrew install regressions.
 
 ## Why temp HOME instead of Docker?
 
 The default macOS Homebrew release path should be tested on macOS. Docker can test Linux/Linuxbrew behavior, but it cannot faithfully test macOS Homebrew bottles, paths, permissions, or formula behavior. The default preflight therefore uses a temporary fake source HOME and target HOME. It behaves like a virtual machine for dotvibe data while still running the macOS binary locally.
 
-For stronger isolation, run the same scripts inside a clean macOS VM before tagging the release.
+For stronger isolation, run the same scripts inside a clean macOS VM before tagging a release.
+
+## v1.1 validation snapshot
+
+Checked on 2026-06-03:
+
+- `brew install yangyifan18/tap/dotvibe` passed.
+- `dotvibe --version` printed `dotvibe version 1.1`.
+- `brew test yangyifan18/tap/dotvibe` passed.
+- The Homebrew-installed binary passed the full fake-HOME preflight:
+
+```bash
+./scripts/homebrew-preflight.sh --binary "$(brew --prefix dotvibe)/bin/dotvibe" --keep
+```
+
+- Covered workflows: `status`, `agent doctor/inventory/import-plan`, `export/list`, default privacy exclusions, `import --dry-run`, `import --stage`, direct fake-HOME import, incremental diff, recipe export/lint/apply/rollback, and `setup` dry-run.
+- Tap CI run `26806025769` passed on `macos-26`, `macos-15-intel`, and `ubuntu`.
+
+Known acceptable limitations for v1.1:
+
+- Homebrew currently installs from source; bottles are not published yet.
+- Local Homebrew may warn about Xcode/CLT versions or unrelated third-party taps; these are not dotvibe failures when build/test still pass.
+- Tap CI may show a Node 20 deprecation annotation from GitHub Actions dependencies; treat it as follow-up noise unless it becomes a failing check.
 
 ## Functional preflight
 
@@ -36,4 +58,4 @@ Expected: `brew audit`, `brew install --build-from-source`, `brew test`, and the
 - [ ] GitHub Release has darwin/arm64, darwin/amd64, linux/amd64 artifacts and checksums.
 - [ ] Formula `url` and `sha256` point to the release artifact or source tarball selected for the tap.
 - [ ] `./scripts/homebrew-formula-smoke.sh --formula <formula>` passes.
-- [ ] README Homebrew install line is updated only after the tap works.
+- [ ] README Homebrew install line remains live only after the tap and formula smoke pass.

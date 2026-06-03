@@ -74,9 +74,6 @@ If you already used full-device migration and everything works, you may not need
 go install github.com/yangyifan18/dotvibe@latest
 
 # Homebrew
-# Runbook: docs/homebrew-preflight.md
-# Maintainers: validate locally before publishing the tap
-# ./scripts/homebrew-preflight.sh --keep
 brew install yangyifan18/tap/dotvibe
 
 # Build from source
@@ -237,6 +234,8 @@ Project filtering currently applies to Claude Code project memory. Codex CLI and
 ## Documentation
 
 - [Obsidian Docs](obsidian-docs/) — Project memory, risks, decisions
+- [Homebrew Preflight](docs/homebrew-preflight.md) — Maintainer validation for Homebrew formula changes
+- [v1.1 Release Notes](docs/releases/v1.1.md)
 - Release builds — `VERSION=1.1 ./scripts/build-release.sh`
 
 ---

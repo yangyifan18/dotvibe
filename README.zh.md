@@ -62,9 +62,6 @@ macOS 迁移助理适合把整台 Mac 迁到另一台 Mac。dotvibe 更窄、更
 go install github.com/yangyifan18/dotvibe@latest
 
 # Homebrew
-# Runbook: docs/homebrew-preflight.md
-# 维护者：发布 tap 前先做本地验证
-# ./scripts/homebrew-preflight.sh --keep
 brew install yangyifan18/tap/dotvibe
 
 # 从源码构建
@@ -225,6 +222,8 @@ HOME=/tmp/dotvibe-restore ./dotvibe import backup.tar.gz --yes
 ## 文档
 
 - [Obsidian 文档](obsidian-docs/) — 项目记忆、风险、决策日志
+- [Homebrew Preflight](docs/homebrew-preflight.md) — Homebrew formula 变更的维护者验证流程
+- [v1.1 Release Notes](docs/releases/v1.1.md)
 - Release 构建 — `VERSION=1.1 ./scripts/build-release.sh`
 
 ---
