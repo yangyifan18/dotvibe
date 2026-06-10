@@ -12,9 +12,9 @@
 </p>
 
 <p align="center">
-  <b>Move, inspect, and share your AI coding context across machines and environments.</b>
+  <b>Back up and migrate Claude Code, Codex CLI, and OpenCode memory safely.</b>
   <br/>
-  DotVibe understands AI coding agents — their memories, skills, prompts, project rules, and configs — not just dotfiles.
+  Move project memory, custom agents, skills, rules, and settings across machines without copying auth tokens or private transcripts by default.
 </p>
 
 <p align="center">
@@ -27,14 +27,15 @@
 
 ## Why dotvibe?
 
-You spent weeks tuning your AI coding agents — custom memory, project-specific rules, hand-crafted skills, conversation history. Then you open a fresh machine, work laptop, or rebuilt development environment and realize:
+AI coding tools now have real working memory: project rules, Claude Code project memory, Codex agents, custom skills, global prompts, and safe settings. Dotfile managers only see paths; they do not understand which files are private, which files are shareable, or how to review changes before restoring them.
 
-- **Claude Code**'s project memory (`~/.claude/projects/`) is gone
-- **Codex CLI**'s custom agents (`~/.codex/agents/`) are gone
-- **OpenCode**'s configs (`~/.config/opencode/`) are gone
-- All those carefully written `MEMORY.md`, `AGENTS.md`, `CLAUDE.md` files — vanished
+Use dotvibe when you want to:
 
-**dotvibe** does.
+- move Claude Code / Codex CLI / OpenCode context to a new machine or rebuilt dev environment;
+- inspect what will be restored before anything touches your real agent directories;
+- compare two backups to see how your AI coding memory changed;
+- share agents, skills, and global rules as a `.vibe` recipe without leaking private project memory;
+- let an agent guide export/import with dry-runs, staging, and project-memory merge review.
 
 ## How is this different from macOS Migration Assistant?
 
@@ -66,6 +67,17 @@ If you already used full-device migration and everything works, you may not need
 | `recipe apply` | Apply a `.vibe` recipe without needing a full backup |
 
 **Supported tools:** Claude Code &middot; Codex CLI &middot; OpenCode
+
+## Try It In 60 Seconds
+
+```bash
+brew install yangyifan18/tap/dotvibe
+dotvibe status
+dotvibe export -o dotvibe-backup.tar.gz
+dotvibe list dotvibe-backup.tar.gz
+```
+
+By default, dotvibe skips auth files, API keys, telemetry, caches, symlinks, and session history. Use `dotvibe import --dry-run` or `dotvibe import --stage` before writing to a real profile.
 
 ## Install
 

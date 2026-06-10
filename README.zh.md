@@ -12,9 +12,9 @@
 </p>
 
 <p align="center">
-  <b>迁移、审查和分享你的 AI coding 上下文。</b>
+  <b>安全备份和迁移 Claude Code、Codex CLI、OpenCode 的记忆。</b>
   <br/>
-  DotVibe 理解 AI coding agents 的 memory、skills、prompts、项目规则和配置，而不只是 dotfiles。
+  在机器之间迁移项目 memory、自定义 agents、skills、规则和 settings；默认不复制 auth token 或私人 transcripts。
 </p>
 
 <p align="center">
@@ -27,14 +27,15 @@
 
 ## 为什么需要 dotvibe？
 
-你花了好几周调教你的 AI coding agent — 自定义 memory、项目规则、精心打磨的 skills、对话历史。然后你打开一台全新机器、工作电脑或重建后的开发环境，发现：
+AI coding 工具已经有了真正的工作记忆：项目规则、Claude Code 项目 memory、Codex agents、自定义 skills、全局 prompts 和安全 settings。通用 dotfile 管理器只能看到路径，却不知道哪些文件是隐私数据、哪些适合分享，也不知道恢复前应该如何审查。
 
-- **Claude Code** 的项目记忆（`~/.claude/projects/`）没了
-- **Codex CLI** 的自定义 agents（`~/.codex/agents/`）没了
-- **OpenCode** 的配置（`~/.config/opencode/`）没了
-- 那些精心写的 `MEMORY.md`、`AGENTS.md`、`CLAUDE.md` — 全没了
+这些场景适合用 dotvibe：
 
-**dotvibe** 理解。
+- 把 Claude Code / Codex CLI / OpenCode 上下文搬到新机器或重建后的开发环境；
+- 写入真实 agent 目录前，先审查将要恢复什么；
+- 比较两次备份，确认 AI coding memory 发生了哪些变化；
+- 把 agents、skills、全局规则打包成 `.vibe` recipe 分享，同时避免泄漏私人项目 memory；
+- 让 agent 通过 dry-run、stage 和项目 memory merge review 引导导出/导入。
 
 ## 和 macOS 迁移助理有什么区别？
 
@@ -54,6 +55,17 @@ macOS 迁移助理适合把整台 Mac 迁到另一台 Mac。dotvibe 更窄、更
 | `recipe apply` | 应用 `.vibe` 配方，不需要完整备份 |
 
 **支持工具：** Claude Code &middot; Codex CLI &middot; OpenCode
+
+## 60 秒试用
+
+```bash
+brew install yangyifan18/tap/dotvibe
+dotvibe status
+dotvibe export -o dotvibe-backup.tar.gz
+dotvibe list dotvibe-backup.tar.gz
+```
+
+默认情况下，dotvibe 会跳过 auth 文件、API keys、telemetry、cache、symlink 和会话历史。写入真实配置前，建议先跑 `dotvibe import --dry-run` 或 `dotvibe import --stage`。
 
 ## 安装
 
